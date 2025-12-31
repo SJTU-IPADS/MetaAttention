@@ -1,0 +1,51 @@
+FROM nvcr.io/nvidia/pytorch:25.02-py3
+
+WORKDIR /root
+
+# 1. Install Tilelang
+RUN git clone --recursive -b my https://github.com/smallscientist1/tilelang.git \
+  && cd tilelang \
+  && USE_LLVM=True pip install -v -e .
+
+# 2. Install basic Python dependencies
+RUN pip install triton==3.2.0 transformers==4.45.0 flash-linear-attention==0.2.0
+
+# 3. Install ml-sigmoid-attention
+# Note: Using MAX_JOBS=X to speed up compilation
+RUN git clone https://github.com/apple/ml-sigmoid-attention.git \
+  && cd ml-sigmoid-attention/flash_sigmoid \
+  && python3 setup.py install
+
+# 4. Install FlashMLA
+RUN git clone https://github.com/deepseek-ai/FlashMLA.git \
+  && cd FlashMLA \
+  && git checkout 9edee0 \
+  && git submodule update --init --recursive \
+  && pip install -v .
+
+# 5. Install Flash Attention 3 (Hopper version, v2.8.3)
+# Set all the DISABLE environment variables you requested to streamline the build
+RUN git clone https://github.com/Dao-AILab/flash-attention.git \
+  && cd flash-attention \
+  && git checkout v2.8.3 \
+  && cd hopper \
+  && FLASH_ATTENTION_DISABLE_PAGEDKV=TRUE \
+     FLASH_ATTENTION_DISABLE_APPENDKV=TRUE \
+     FLASH_ATTENTION_DISABLE_LOCAL=TRUE \
+     FLASH_ATTENTION_DISABLE_SOFTCAP=TRUE \
+     FLASH_ATTENTION_DISABLE_PACKGQA=TRUE \
+     FLASH_ATTENTION_DISABLE_FP8=TRUE \
+     FLASH_ATTENTION_DISABLE_VARLEN=TRUE \
+     FLASH_ATTENTION_DISABLE_SM80=TRUE \
+     python setup.py install
+
+RUN git clone https://github.com/state-spaces/mamba.git \
+  && cd mamba \
+  && git checkout v2.2.6.post3 \
+  && mv mamba_ssm/__init__.py mamba_ssm/__init__.py.bak
+
+RUN pip install termcolor
+
+ENV PYTHONPATH="/AttentionEngine:/AttentionEngine/attention_engine:/root/mamba"
+
+CMD ["bash"]

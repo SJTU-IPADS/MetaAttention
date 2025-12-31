@@ -1,0 +1,100 @@
+[
+    {
+        "batch": 32,
+        "heads": 6,
+        "seq_len": 512,
+        "dim": 64,
+        "dimv": 64,
+        "tuned_config": {
+            "block_M": 128,
+            "block_N": 64,
+            "num_stages": 1,
+            "thread_num": 256,
+            "shared_fuse": false
+        }
+    },
+    {
+        "batch": 32,
+        "heads": 6,
+        "seq_len": 1024,
+        "dim": 64,
+        "dimv": 64,
+        "tuned_config": {
+            "block_M": 128,
+            "block_N": 64,
+            "num_stages": 1,
+            "thread_num": 256,
+            "shared_fuse": false
+        }
+    },
+    {
+        "batch": 32,
+        "heads": 6,
+        "seq_len": 2048,
+        "dim": 64,
+        "dimv": 64,
+        "tuned_config": {
+            "block_M": 128,
+            "block_N": 32,
+            "num_stages": 0,
+            "thread_num": 256,
+            "shared_fuse": false
+        }
+    },
+    {
+        "batch": 64,
+        "heads": 6,
+        "seq_len": 512,
+        "dim": 64,
+        "dimv": 64,
+        "tuned_config": {
+            "block_M": 128,
+            "block_N": 64,
+            "num_stages": 1,
+            "thread_num": 256,
+            "shared_fuse": false
+        }
+    },
+    {
+        "batch": 64,
+        "heads": 6,
+        "seq_len": 1024,
+        "dim": 64,
+        "dimv": 64,
+        "tuned_config": {
+            "block_M": 128,
+            "block_N": 32,
+            "num_stages": 0,
+            "thread_num": 256,
+            "shared_fuse": false
+        }
+    },
+    {
+        "batch": 64,
+        "heads": 6,
+        "seq_len": 2048,
+        "dim": 64,
+        "dimv": 64,
+        "tuned_config": {
+            "block_M": 128,
+            "block_N": 32,
+            "num_stages": 0,
+            "thread_num": 256,
+            "shared_fuse": false
+        }
+    },
+    {
+        "batch": 1,
+        "heads": 6,
+        "seq_len": 2048,
+        "dim": 64,
+        "dimv": 64,
+        "tuned_config": {
+            "block_M": 64,
+            "block_N": 64,
+            "num_stages": 1,
+            "thread_num": 256,
+            "shared_fuse": false
+        }
+    }
+]

@@ -1,0 +1,27 @@
+FROM rocm/pytorch:rocm6.3.2_ubuntu22.04_py3.10_pytorch_release_2.4.0
+
+WORKDIR /root
+
+# 1. Install Tilelang
+RUN git clone --recursive -b my https://github.com/smallscientist1/tilelang.git \
+  && cd tilelang \
+  && USE_LLVM=True USE_ROCM=True pip install -v -e .
+
+RUN pip install "numpy<2.0" einops matplotlib pandas termcolor
+
+RUN pip install flash-attn==2.7.4.post1 --no-build-isolation
+
+RUN git clone https://github.com/fla-org/flash-linear-attention.git \
+    && cd flash-linear-attention \
+    && git checkout v0.2.0 \
+    && mv fla/__init__.py fla/__init__.py.bak \
+    && mv fla/ops/__init__.py fla/ops/__init__.py.bak \
+
+RUN git clone https://github.com/state-spaces/mamba.git \
+  && cd mamba \
+  && git checkout v2.2.6.post3 \
+  && mv mamba_ssm/__init__.py mamba_ssm/__init__.py.bak
+
+ENV PYTHONPATH="/AttentionEngine:/AttentionEngine/attention_engine:/root/mamba:/root/flash-linear-attention"
+
+CMD ["bash"]

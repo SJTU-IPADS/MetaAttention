@@ -1,0 +1,98 @@
+[
+    {
+        "batch": 8,
+        "heads": 128,
+        "kv_head_num": 1,
+        "seqlen_kv": 2048,
+        "dim": 512,
+        "pe_dim": 64,
+        "tuned_config": {
+            "block_N": 16,
+            "block_H": 64,
+            "num_split": 4,
+            "num_stages": 0,
+            "shared_fuse": false
+        },
+        "tuned_latency": 0.1985590010881424
+    },
+    {
+        "batch": 1,
+        "heads": 128,
+        "kv_head_num": 1,
+        "seqlen_kv": 2048,
+        "dim": 512,
+        "pe_dim": 64,
+        "tuned_config": {
+            "block_N": 16,
+            "block_H": 64,
+            "num_split": 8,
+            "num_stages": 0,
+            "shared_fuse": false
+        },
+        "tuned_latency": 0.17791999876499176
+    },
+    {
+        "batch": 1,
+        "heads": 128,
+        "kv_head_num": 1,
+        "seqlen_kv": 4096,
+        "dim": 512,
+        "pe_dim": 64,
+        "tuned_config": {
+            "block_N": 16,
+            "block_H": 64,
+            "num_split": 8,
+            "num_stages": 0,
+            "shared_fuse": false
+        },
+        "tuned_latency": 0.2507210075855255
+    },
+    {
+        "batch": 1,
+        "heads": 128,
+        "kv_head_num": 1,
+        "seqlen_kv": 8192,
+        "dim": 512,
+        "pe_dim": 64,
+        "tuned_config": {
+            "block_N": 16,
+            "block_H": 64,
+            "num_split": 8,
+            "num_stages": 0,
+            "shared_fuse": false
+        },
+        "tuned_latency": 0.42928099632263184
+    },
+    {
+        "batch": 8,
+        "heads": 128,
+        "kv_head_num": 1,
+        "seqlen_kv": 4096,
+        "dim": 512,
+        "pe_dim": 64,
+        "tuned_config": {
+            "block_N": 16,
+            "block_H": 64,
+            "num_split": 4,
+            "num_stages": 0,
+            "shared_fuse": false
+        },
+        "tuned_latency": 0.41168099641799927
+    },
+    {
+        "batch": 8,
+        "heads": 128,
+        "kv_head_num": 1,
+        "seqlen_kv": 8192,
+        "dim": 512,
+        "pe_dim": 64,
+        "tuned_config": {
+            "block_N": 16,
+            "block_H": 64,
+            "num_split": 4,
+            "num_stages": 0,
+            "shared_fuse": false
+        },
+        "tuned_latency": 0.7550420165061951
+    }
+]
