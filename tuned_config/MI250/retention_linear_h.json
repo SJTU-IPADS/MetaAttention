@@ -1,0 +1,206 @@
+[
+    {
+        "batch": 1,
+        "headq": 32,
+        "headk": 32,
+        "head": 32,
+        "seqlen": 2048,
+        "dim": 256,
+        "dimv": 512,
+        "BT": 32,
+        "tuned_config": {
+            "BK": 32,
+            "BV": 128,
+            "num_stages": 1,
+            "num_threads": 256
+        },
+        "tuned_latency": 1.1844830513000488
+    },
+    {
+        "batch": 1,
+        "headq": 32,
+        "headk": 32,
+        "head": 32,
+        "seqlen": 2048,
+        "dim": 256,
+        "dimv": 512,
+        "BT": 64,
+        "tuned_config": {
+            "BK": 32,
+            "BV": 128,
+            "num_stages": 1,
+            "num_threads": 256
+        },
+        "tuned_latency": 0.9182419776916504
+    },
+    {
+        "batch": 1,
+        "headq": 32,
+        "headk": 32,
+        "head": 32,
+        "seqlen": 2048,
+        "dim": 256,
+        "dimv": 512,
+        "BT": 128,
+        "tuned_config": {
+            "BK": 32,
+            "BV": 64,
+            "num_stages": 1,
+            "num_threads": 256
+        },
+        "tuned_latency": 1.1142430305480957
+    },
+    {
+        "batch": 1,
+        "headq": 32,
+        "headk": 32,
+        "head": 32,
+        "seqlen": 4096,
+        "dim": 256,
+        "dimv": 512,
+        "BT": 32,
+        "tuned_config": {
+            "BK": 32,
+            "BV": 128,
+            "num_stages": 1,
+            "num_threads": 256
+        },
+        "tuned_latency": 2.3670480251312256
+    },
+    {
+        "batch": 1,
+        "headq": 32,
+        "headk": 32,
+        "head": 32,
+        "seqlen": 4096,
+        "dim": 256,
+        "dimv": 512,
+        "BT": 64,
+        "tuned_config": {
+            "BK": 32,
+            "BV": 128,
+            "num_stages": 1,
+            "num_threads": 256
+        },
+        "tuned_latency": 1.8270460367202759
+    },
+    {
+        "batch": 1,
+        "headq": 32,
+        "headk": 32,
+        "head": 32,
+        "seqlen": 4096,
+        "dim": 256,
+        "dimv": 512,
+        "BT": 128,
+        "tuned_config": {
+            "BK": 32,
+            "BV": 64,
+            "num_stages": 1,
+            "num_threads": 256
+        },
+        "tuned_latency": 2.291208028793335
+    },
+    {
+        "batch": 8,
+        "headq": 32,
+        "headk": 32,
+        "head": 32,
+        "seqlen": 2048,
+        "dim": 256,
+        "dimv": 512,
+        "BT": 32,
+        "tuned_config": {
+            "BK": 64,
+            "BV": 128,
+            "num_stages": 1,
+            "num_threads": 256
+        },
+        "tuned_latency": 8.53841781616211
+    },
+    {
+        "batch": 8,
+        "headq": 32,
+        "headk": 32,
+        "head": 32,
+        "seqlen": 2048,
+        "dim": 256,
+        "dimv": 512,
+        "BT": 64,
+        "tuned_config": {
+            "BK": 32,
+            "BV": 128,
+            "num_stages": 1,
+            "num_threads": 256
+        },
+        "tuned_latency": 6.954891204833984
+    },
+    {
+        "batch": 8,
+        "headq": 32,
+        "headk": 32,
+        "head": 32,
+        "seqlen": 2048,
+        "dim": 256,
+        "dimv": 512,
+        "BT": 128,
+        "tuned_config": {
+            "BK": 32,
+            "BV": 64,
+            "num_stages": 1,
+            "num_threads": 256
+        },
+        "tuned_latency": 8.749770164489746
+    },
+    {
+        "batch": 8,
+        "headq": 32,
+        "headk": 32,
+        "head": 32,
+        "seqlen": 4096,
+        "dim": 256,
+        "dimv": 512,
+        "BT": 32,
+        "tuned_config": {
+            "BK": 128,
+            "BV": 64,
+            "num_stages": 1,
+            "num_threads": 128
+        },
+        "tuned_latency": 17.005916595458984
+    },
+    {
+        "batch": 8,
+        "headq": 32,
+        "headk": 32,
+        "head": 32,
+        "seqlen": 4096,
+        "dim": 256,
+        "dimv": 512,
+        "BT": 64,
+        "tuned_config": {
+            "BK": 32,
+            "BV": 128,
+            "num_stages": 1,
+            "num_threads": 256
+        },
+        "tuned_latency": 13.958234786987305
+    },
+    {
+        "batch": 8,
+        "headq": 32,
+        "headk": 32,
+        "head": 32,
+        "seqlen": 4096,
+        "dim": 256,
+        "dimv": 512,
+        "BT": 128,
+        "tuned_config": {
+            "BK": 32,
+            "BV": 64,
+            "num_stages": 1,
+            "num_threads": 256
+        },
+        "tuned_latency": 17.8110294342041
+    }
+]

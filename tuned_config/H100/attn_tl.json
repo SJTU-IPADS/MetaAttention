@@ -1,0 +1,282 @@
+[
+    {
+        "batch": 1,
+        "heads": 16,
+        "seq_len": 2048,
+        "dim": 128,
+        "dimv": 128,
+        "tuned_config": {
+            "block_M": 128,
+            "block_N": 128,
+            "num_stages": 1,
+            "thread_num": 256,
+            "shared_fuse": false
+        }
+    },
+    {
+        "batch": 1,
+        "heads": 16,
+        "seq_len": 2048,
+        "dim": 128,
+        "dimv": 256,
+        "tuned_config": {
+            "block_M": 128,
+            "block_N": 128,
+            "num_stages": 1,
+            "thread_num": 256,
+            "shared_fuse": false
+        }
+    },
+    {
+        "batch": 1,
+        "heads": 16,
+        "seq_len": 2048,
+        "dim": 192,
+        "dimv": 128,
+        "tuned_config": {
+            "block_M": 128,
+            "block_N": 128,
+            "num_stages": 1,
+            "thread_num": 256,
+            "shared_fuse": false
+        }
+    },
+    {
+        "batch": 1,
+        "heads": 16,
+        "seq_len": 4096,
+        "dim": 192,
+        "dimv": 128,
+        "tuned_config": {
+            "block_M": 128,
+            "block_N": 128,
+            "num_stages": 1,
+            "thread_num": 256,
+            "shared_fuse": false
+        }
+    },
+    {
+        "batch": 1,
+        "heads": 16,
+        "seq_len": 8192,
+        "dim": 192,
+        "dimv": 128,
+        "tuned_config": {
+            "block_M": 128,
+            "block_N": 128,
+            "num_stages": 2,
+            "thread_num": 256,
+            "shared_fuse": false
+        }
+    },
+    {
+        "batch": 8,
+        "heads": 16,
+        "seq_len": 2048,
+        "dim": 192,
+        "dimv": 128,
+        "tuned_config": {
+            "block_M": 128,
+            "block_N": 128,
+            "num_stages": 1,
+            "thread_num": 256,
+            "shared_fuse": false
+        }
+    },
+    {
+        "batch": 8,
+        "heads": 16,
+        "seq_len": 4096,
+        "dim": 192,
+        "dimv": 128,
+        "tuned_config": {
+            "block_M": 128,
+            "block_N": 128,
+            "num_stages": 2,
+            "thread_num": 256,
+            "shared_fuse": false
+        }
+    },
+    {
+        "batch": 8,
+        "heads": 16,
+        "seq_len": 8192,
+        "dim": 192,
+        "dimv": 128,
+        "tuned_config": {
+            "block_M": 128,
+            "block_N": 128,
+            "num_stages": 1,
+            "thread_num": 256,
+            "shared_fuse": false
+        }
+    },
+    {
+        "batch": 1,
+        "heads": 32,
+        "seq_len": 2048,
+        "dim": 128,
+        "dimv": 128,
+        "tuned_config": {
+            "block_M": 128,
+            "block_N": 128,
+            "num_stages": 2,
+            "thread_num": 256,
+            "shared_fuse": false
+        }
+    },
+    {
+        "batch": 1,
+        "heads": 32,
+        "seq_len": 4096,
+        "dim": 128,
+        "dimv": 128,
+        "tuned_config": {
+            "block_M": 128,
+            "block_N": 128,
+            "num_stages": 2,
+            "thread_num": 256,
+            "shared_fuse": false
+        }
+    },
+    {
+        "batch": 1,
+        "heads": 32,
+        "seq_len": 8192,
+        "dim": 128,
+        "dimv": 128,
+        "tuned_config": {
+            "block_M": 128,
+            "block_N": 128,
+            "num_stages": 2,
+            "thread_num": 256,
+            "shared_fuse": false
+        }
+    },
+    {
+        "batch": 8,
+        "heads": 32,
+        "seq_len": 2048,
+        "dim": 128,
+        "dimv": 128,
+        "tuned_config": {
+            "block_M": 128,
+            "block_N": 128,
+            "num_stages": 2,
+            "thread_num": 256,
+            "shared_fuse": false
+        }
+    },
+    {
+        "batch": 8,
+        "heads": 32,
+        "seq_len": 4096,
+        "dim": 128,
+        "dimv": 128,
+        "tuned_config": {
+            "block_M": 128,
+            "block_N": 128,
+            "num_stages": 2,
+            "thread_num": 256,
+            "shared_fuse": false
+        }
+    },
+    {
+        "batch": 8,
+        "heads": 32,
+        "seq_len": 8192,
+        "dim": 128,
+        "dimv": 128,
+        "tuned_config": {
+            "block_M": 128,
+            "block_N": 128,
+            "num_stages": 2,
+            "thread_num": 256,
+            "shared_fuse": false
+        }
+    },
+    {
+        "batch": 1,
+        "heads": 12,
+        "seq_len": 2048,
+        "dim": 128,
+        "dimv": 256,
+        "tuned_config": {
+            "block_M": 128,
+            "block_N": 64,
+            "num_stages": 1,
+            "thread_num": 256,
+            "shared_fuse": false
+        }
+    },
+    {
+        "batch": 1,
+        "heads": 12,
+        "seq_len": 4096,
+        "dim": 128,
+        "dimv": 256,
+        "tuned_config": {
+            "block_M": 128,
+            "block_N": 128,
+            "num_stages": 2,
+            "thread_num": 256,
+            "shared_fuse": false
+        }
+    },
+    {
+        "batch": 1,
+        "heads": 12,
+        "seq_len": 8192,
+        "dim": 128,
+        "dimv": 256,
+        "tuned_config": {
+            "block_M": 128,
+            "block_N": 128,
+            "num_stages": 1,
+            "thread_num": 256,
+            "shared_fuse": false
+        }
+    },
+    {
+        "batch": 8,
+        "heads": 12,
+        "seq_len": 2048,
+        "dim": 128,
+        "dimv": 256,
+        "tuned_config": {
+            "block_M": 128,
+            "block_N": 128,
+            "num_stages": 1,
+            "thread_num": 256,
+            "shared_fuse": false
+        }
+    },
+    {
+        "batch": 8,
+        "heads": 12,
+        "seq_len": 4096,
+        "dim": 128,
+        "dimv": 256,
+        "tuned_config": {
+            "block_M": 128,
+            "block_N": 128,
+            "num_stages": 1,
+            "thread_num": 256,
+            "shared_fuse": false
+        }
+    },
+    {
+        "batch": 8,
+        "heads": 12,
+        "seq_len": 8192,
+        "dim": 128,
+        "dimv": 256,
+        "tuned_config": {
+            "block_M": 128,
+            "block_N": 128,
+            "num_stages": 1,
+            "thread_num": 256,
+            "shared_fuse": false
+        }
+    }
+]

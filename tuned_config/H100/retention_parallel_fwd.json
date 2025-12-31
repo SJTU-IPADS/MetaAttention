@@ -1,0 +1,58 @@
+[
+    {
+        "batch": 1,
+        "heads": 32,
+        "seq_len": 2048,
+        "dim": 256,
+        "dimv": 512,
+        "tuned_config": {
+            "block_M": 64,
+            "block_N": 64,
+            "num_stages": 1,
+            "thread_num": 256,
+            "shared_fuse": true
+        }
+    },
+    {
+        "batch": 1,
+        "heads": 32,
+        "seq_len": 4096,
+        "dim": 256,
+        "dimv": 512,
+        "tuned_config": {
+            "block_M": 64,
+            "block_N": 64,
+            "num_stages": 1,
+            "thread_num": 256,
+            "shared_fuse": true
+        }
+    },
+    {
+        "batch": 8,
+        "heads": 32,
+        "seq_len": 2048,
+        "dim": 256,
+        "dimv": 512,
+        "tuned_config": {
+            "block_M": 64,
+            "block_N": 64,
+            "num_stages": 1,
+            "thread_num": 256,
+            "shared_fuse": true
+        }
+    },
+    {
+        "batch": 8,
+        "heads": 32,
+        "seq_len": 4096,
+        "dim": 256,
+        "dimv": 512,
+        "tuned_config": {
+            "block_M": 64,
+            "block_N": 64,
+            "num_stages": 1,
+            "thread_num": 256,
+            "shared_fuse": true
+        }
+    }
+]

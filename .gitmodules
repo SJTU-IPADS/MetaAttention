@@ -1,0 +1,9 @@
+[submodule "3rd_parties/cutlass"]
+	path = 3rd_parties/cutlass
+	url = https://github.com/smallscientist1/cutlass.git
+[submodule "3rd_parties/cutlass_39"]
+	path = 3rd_parties/cutlass_39
+	url = https://github.com/NVIDIA/cutlass.git
+[submodule "3rd_parties/cutlass_dc4817"]
+	path = 3rd_parties/cutlass_dc4817
+	url = https://github.com/NVIDIA/cutlass

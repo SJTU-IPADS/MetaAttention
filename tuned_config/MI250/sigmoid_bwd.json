@@ -1,0 +1,15 @@
+[
+    {
+        "batch": 1,
+        "heads": 32,
+        "seq_len": 2048,
+        "dim": 128,
+        "dimv": 128,
+        "tuned_config": {
+            "block_M": 64,
+            "block_N": 32,
+            "num_stages": 0,
+            "thread_num": 256
+        }
+    }
+]

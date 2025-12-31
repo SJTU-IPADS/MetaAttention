@@ -1,0 +1,18 @@
+[
+    {
+        "batch": 8,
+        "heads": 128,
+        "kv_head_num": 1,
+        "seqlen_kv": 2048,
+        "dim": 512,
+        "pe_dim": 64,
+        "tuned_config": {
+            "block_N": 64,
+            "block_H": 64,
+            "num_split": 8,
+            "num_stages": 2,
+            "shared_fuse": true
+        },
+        "tuned_latency": 0.032896000891923904
+    }
+]
