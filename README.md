@@ -4,22 +4,7 @@
 
 This repository contains the artifacts for the PPoPP'26 Artifact Evaluation of paper #238: "MetaAttention: A Unified and Performant Attention Framework Across Hardware Backends".
 
-
-### Badges Claimed
-
-- Artifacts Available
-
-  + All code related to MetaAttention is publicly available in this repository.
-- Artifacts Evaluated – Functional
-
-  + We provide detailed documentation and Docker support to build, install, and test MetaAttention. The examples/ folder contains all Attention operators discussed in the paper, and testing/ contains functional correctness tests.
-- Results Reproduced
-  + We provide Docker images and scripts to reproduce the main performance results presented in the paper (Figure 11 and Figure 14).
-
-### Claims Supported by Artifact
-
-- Functionality: MetaAttention can automatically generate correct kernels for diverse attention variants (e.g., RetNet, Mamba2, MLA) across different backends.
-- Performance: MetaAttention achieves performance comparable to hand-optimized libraries for previously supported attention mechanisms, and significantly outperforms native implementations (e.g., PyTorch) for mechanisms where no hand-optimized library exists on H100 and MI250 GPUs.
+MetaAttention provides users with pythonic interface to define customized attention flexibly and automatically generate device code with high performance. Examples of various attention mechanisms (e.g., softmax attention, RetNet, Mamba2, MLA) are provided in the examples/ folder.
 
 
 # 1. Getting Started Guide
