@@ -1,9 +1,9 @@
 [project]
 name = "meta-attention"
 version = "0.1.0"
-description = "Meta Attention"
+description = "MetaAttention with TileLang as the default runtime backend"
 readme = "README.md"
-requires-python = ">=3.10"
+requires-python = ">=3.10,<3.14"
 dependencies = [
   "einops",
   "jinja2",
@@ -11,13 +11,15 @@ dependencies = [
   "numpy<2",
   "sympy",
   "termcolor",
+  "tilelang",
+  "torch",
 ]
 
 [project.optional-dependencies]
-cuda = [
-  "triton==3.2.0",
-  "transformers==4.45.0",
+bench = [
   "flash-linear-attention==0.2.0",
+  "pandas",
+  "transformers==4.45.0",
 ]
 test = [
   "pytest",
@@ -48,3 +50,12 @@ attn_engine = [
 
 [tool.uv]
 default-groups = []
+
+[[tool.uv.index]]
+name = "pytorch-cu128"
+url = "https://download.pytorch.org/whl/cu128"
+explicit = true
+
+[tool.uv.sources]
+torch = [{ index = "pytorch-cu128" }]
+tilelang = { git = "https://github.com/tile-ai/tilelang.git", rev = "41b95a5dfafea78f200b7253c6f7527c04ee522e" }
