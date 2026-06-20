@@ -112,8 +112,7 @@ def to_tl_op(type: str, *args: SymbolScalar):
             )
         elif type == "Tanh":
             code.add_line(
-                # f"{args[0].varname}[{idx_str}] = T.tanh({args[1].varname}{idx_strs[1]})"
-                f"fast_tanh({args[1].varname}{idx_strs[1]}, {args[0].varname}[{idx_str}])"
+                f"{args[0].varname}[{idx_str}] = T.tanh({args[1].varname}{idx_strs[1]})"
             )
         elif type == "Abs":
             code.add_line(
