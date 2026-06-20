@@ -1,24 +1,23 @@
-from examples.mha import causal_softmax_attention
-from examples.mha_v2 import causal_softmax_attention as causal_softmax_attention_v2
-from examples.mha_decode import softmax_attention_decode
-from examples.mamba2 import mamba2
-from examples.gated_retention import gated_retention
-from examples.sigmoid_attn import sigmoid_attention
-from examples.sparse_gqa_decode import sparse_gqa_decode
-from examples.retnet_recurrent import retnet_recurrent
-from examples.reluattn import relu_attention
-from examples.mla_decode import mla_decode
+import math
+import time
+from typing import Optional
 
 import torch
 import torch.nn.functional as F
-from einops import rearrange, einsum, repeat
-import math
-from typing import Optional
-import time
-
 from benchmark.bench_utils import assert_close
+from einops import einsum, rearrange, repeat
+from termcolor import colored, cprint
 
-from termcolor import cprint, colored
+from examples.gated_retention import gated_retention
+from examples.mamba2 import mamba2
+from examples.mha import causal_softmax_attention
+from examples.mha_decode import softmax_attention_decode
+from examples.mha_v2 import causal_softmax_attention as causal_softmax_attention_v2
+from examples.mla_decode import mla_decode
+from examples.reluattn import relu_attention
+from examples.retnet_recurrent import retnet_recurrent
+from examples.sigmoid_attn import sigmoid_attention
+from examples.sparse_gqa_decode import sparse_gqa_decode
 
 
 def run_test_with_info(func, *args, **kwargs):
@@ -48,25 +47,21 @@ def run_test_with_info(func, *args, **kwargs):
         print("-" * 60)
 
 
-def test_attention():
+def run_attention_suite():
     total_start = time.perf_counter()
 
-    cprint("\n" + "=" * 60, "magenta", attrs=["bold"])
-    cprint("      STARTING TEST SUITE", "magenta", attrs=["bold"])
-    cprint("=" * 60 + "\n", "magenta", attrs=["bold"])
-
     run_test_with_info(
-        test_softmaxattention, 1, 16, 2048, 128, 128
+        check_softmaxattention, 1, 16, 2048, 128, 128
     )  # 1 , TODO: fix autotune
-    run_test_with_info(test_softmaxattention, 1, 16, 2048, 128, 256)  # 1
-    run_test_with_info(test_softmaxattention_decode, 8, 16, 1, 4096, 128, 128)  # 1
-    run_test_with_info(test_mamba2, 1, 1, 2048, 128, 64, HK=1, HV=80)  # 1
-    run_test_with_info(test_gated_retention, 8, 32, 2048, 256, 256)  # 1
-    run_test_with_info(test_sigmoid_attention, 1, 32, 2048, 128, 128)  # 1
-    run_test_with_info(test_sparse_gqa_decode, 8, 32, 8, 2048, 128, 128)  # 1
-    run_test_with_info(test_retnet_recurrent, 1, 32, 2048, 256, 512)  # 1
-    run_test_with_info(test_relu_attention, 1, 6, 2048, 64, 64)  # 1
-    run_test_with_info(test_mla_decode, 8, 128, 2048, 576, 512, HKV=1)
+    run_test_with_info(check_softmaxattention, 1, 16, 2048, 128, 256)  # 1
+    run_test_with_info(check_softmaxattention_decode, 8, 16, 1, 4096, 128, 128)  # 1
+    run_test_with_info(check_mamba2, 1, 1, 2048, 128, 64, HK=1, HV=80)  # 1
+    run_test_with_info(check_gated_retention, 8, 32, 2048, 256, 256)  # 1
+    run_test_with_info(check_sigmoid_attention, 1, 32, 2048, 128, 128)  # 1
+    run_test_with_info(check_sparse_gqa_decode, 8, 32, 8, 2048, 128, 128)  # 1
+    run_test_with_info(check_retnet_recurrent, 1, 32, 2048, 256, 512)  # 1
+    run_test_with_info(check_relu_attention, 1, 6, 2048, 64, 64)  # 1
+    run_test_with_info(check_mla_decode, 8, 128, 2048, 576, 512, HKV=1)
 
     total_end = time.perf_counter()
     total_time = total_end - total_start
@@ -77,7 +72,7 @@ def test_attention():
     cprint("=" * 60, "green", attrs=["bold"])
 
 
-def test_softmaxattention(
+def check_softmaxattention(
     B, H, S, D, DV, device="cuda", dtype=torch.float16, require_grad=True, use_v2=False
 ):
     if use_v2:
@@ -135,7 +130,7 @@ def test_softmaxattention(
         torch.testing.assert_close(value1.grad, value.grad, rtol=1e-1, atol=1e-1)
 
 
-def test_softmaxattention_decode(
+def check_softmaxattention_decode(
     B, H, S, KV, D, DV, device="cuda", dtype=torch.float16
 ):
     attention_module = softmax_attention_decode(B, H, S, KV, D, DV)
@@ -165,7 +160,7 @@ def test_softmaxattention_decode(
     torch.testing.assert_close(o, ref_o, rtol=1e-2, atol=1e-2)
 
 
-def test_mamba2(
+def check_mamba2(
     B, HQ, S, D, DV, HK=None, HV=None, dtype=torch.bfloat16, require_grad=True
 ):
     attention_module = mamba2(B, HQ, S, D, DV, HK=HK, HV=HV, dtype=dtype)
@@ -439,7 +434,7 @@ def test_mamba2(
         # )
 
 
-def test_gated_retention(B, H, S, D, DV, dtype=torch.bfloat16, require_grad=True):
+def check_gated_retention(B, H, S, D, DV, dtype=torch.bfloat16, require_grad=True):
 
     # prepare input
     accum_dtype = torch.float32
@@ -569,7 +564,7 @@ def test_gated_retention(B, H, S, D, DV, dtype=torch.bfloat16, require_grad=True
         # )
 
 
-def test_sigmoid_attention(
+def check_sigmoid_attention(
     B, H, S, D, DV, device="cuda", dtype=torch.float16, require_grad=True
 ):
     attention_module = sigmoid_attention(B, H, S, D, DV, tune=True)
@@ -649,7 +644,7 @@ def test_sigmoid_attention(
         )
 
 
-def test_relu_attention(
+def check_relu_attention(
     B, H, S, D, DV, device="cuda", dtype=torch.float16, require_grad=True
 ):
     attention_module = relu_attention(B, H, S, D, DV, dtype=dtype, tune=True)
@@ -688,7 +683,7 @@ def test_relu_attention(
         assert_close(value.grad, value1.grad, rtol=1e-1, atol=1e-1, mismatch_ratio=1e-3)
 
 
-def test_sparse_gqa_decode(B, H, G, S, D, DV, device="cuda", dtype=torch.float16):
+def check_sparse_gqa_decode(B, H, G, S, D, DV, device="cuda", dtype=torch.float16):
     attention_module = sparse_gqa_decode(B, H, G, S, D, DV, dtype=dtype)
 
     def ref_program_torch(
@@ -810,7 +805,7 @@ def test_sparse_gqa_decode(B, H, G, S, D, DV, device="cuda", dtype=torch.float16
     torch.testing.assert_close(o, ref_o, rtol=1e-1, atol=1e-1)
 
 
-def test_retnet_recurrent(B, H, S, D, DV, dtype=torch.bfloat16, require_grad=True):
+def check_retnet_recurrent(B, H, S, D, DV, dtype=torch.bfloat16, require_grad=True):
     attention_module = retnet_recurrent(B, H, S, D, DV, dtype=dtype)
 
     def ref(q, k, v):
@@ -884,7 +879,7 @@ def test_retnet_recurrent(B, H, S, D, DV, dtype=torch.bfloat16, require_grad=Tru
         )
 
 
-def test_mla_decode(B, HQ, SKV, D, DV, HKV=1, dtype=torch.float16):
+def check_mla_decode(B, HQ, SKV, D, DV, HKV=1, dtype=torch.float16):
 
     attention_module = mla_decode(
         B, HQ, SKV, D, DV, HK=HKV, HV=HKV, dtype=dtype, tune=True
@@ -941,4 +936,4 @@ def test_mla_decode(B, HQ, SKV, D, DV, HKV=1, dtype=torch.float16):
 
 
 if __name__ == "__main__":
-    test_attention()
+    run_attention_suite()

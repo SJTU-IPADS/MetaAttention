@@ -95,14 +95,17 @@ Expected output includes `AttentionEngine Succuessfully created.`
 
 # Functional tests
 
-Run the following command to verify the correctness of various supported Attention operators mentioned in Sections 3 & 4 of the paper.
+Run the following commands to verify the correctness of supported Attention operators mentioned in Sections 3 & 4 of the paper.
 ```bash
-# may take about 10 minutes
+# forward correctness + package smoke path
+python -m pytest attention_engine/tests/test_forward.py attention_engine/tests/test_blockmask.py
+
+# legacy full functional script, may take about 10 minutes
 python testing/test.py
 ```
-This script runs tests for parallel and recurrent patterns against reference implementations (e.g., PyTorch).
+The pytest path covers forward-only correctness checks and package smoke tests. The legacy script runs the broader parallel and recurrent functional suite against reference implementations (e.g., PyTorch).
 
-**Expected Output**: The script should print All tests passed. (There may be some warnings from baselines, but they can be ignored.)
+**Expected Output**: The pytest path runs forward correctness checks (skipping GPU-only cases when no CUDA/HIP-visible GPU is available) and blockmask tests. The legacy script should print All tests passed. (There may be some warnings from baselines, but they can be ignored.)
 
 
 # Performance tests

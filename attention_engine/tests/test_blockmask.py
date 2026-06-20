@@ -20,17 +20,25 @@ Q_BLOCK_SIZE = 128
 K_BLOCK_SIZE = 64
 
 
-def test_mask(mask_mod):
+def test_causal_mask_classification():
     mask_tensor = create_block_mask(
-        mask_mod, B, H, S, S, "cpu", Q_BLOCK_SIZE, K_BLOCK_SIZE
+        causal_mask, B, H, S, S, "cpu", Q_BLOCK_SIZE, K_BLOCK_SIZE
     )
-    print(mask_tensor.shape)
-    print(mask_tensor)
-
-    print(is_causal_mask(mask_tensor, Q_BLOCK_SIZE, K_BLOCK_SIZE))
-    print(is_less_causal_mask(mask_tensor, Q_BLOCK_SIZE, K_BLOCK_SIZE))
+    assert bool(is_causal_mask(mask_tensor, Q_BLOCK_SIZE, K_BLOCK_SIZE)) is True
+    assert bool(is_less_causal_mask(mask_tensor, Q_BLOCK_SIZE, K_BLOCK_SIZE)) is True
 
 
-test_mask(causal_mask)
-test_mask(causal_mask_1)
-test_mask(causal_mask_2)
+def test_causal_mask_plus_one_classification():
+    mask_tensor = create_block_mask(
+        causal_mask_1, B, H, S, S, "cpu", Q_BLOCK_SIZE, K_BLOCK_SIZE
+    )
+    assert bool(is_causal_mask(mask_tensor, Q_BLOCK_SIZE, K_BLOCK_SIZE)) is False
+    assert bool(is_less_causal_mask(mask_tensor, Q_BLOCK_SIZE, K_BLOCK_SIZE)) is False
+
+
+def test_strictly_past_mask_classification():
+    mask_tensor = create_block_mask(
+        causal_mask_2, B, H, S, S, "cpu", Q_BLOCK_SIZE, K_BLOCK_SIZE
+    )
+    assert bool(is_causal_mask(mask_tensor, Q_BLOCK_SIZE, K_BLOCK_SIZE)) is False
+    assert bool(is_less_causal_mask(mask_tensor, Q_BLOCK_SIZE, K_BLOCK_SIZE)) is True
