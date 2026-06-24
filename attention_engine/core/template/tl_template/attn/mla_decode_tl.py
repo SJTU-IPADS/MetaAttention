@@ -570,8 +570,7 @@ def tune(tune_file, kernel_profiler, problem_keys) -> Tuple:
             )
     return tuned_config, tuned_latency
 
-
-TUNE = False
+TUNE={{TUNE}}
 BLOCK_N = 64
 BLOCK_H = 64
 num_split = 1
@@ -597,6 +596,7 @@ if TUNE:
     num_split = tuned_config["num_split"]
     num_stages = tuned_config["num_stages"]
     shared_fuse = tuned_config["shared_fuse"]
+
 program = flashattn(
     {{BATCH}}, {{HEADS}}, {{KV_HEAD_NUM}}, {{KV_CTX}}, {{DIM}}, {{PE_DIM}}
 )(block_N=BLOCK_N, block_H=BLOCK_H, num_split=num_split, num_stages=num_stages, shared_fuse=shared_fuse)
