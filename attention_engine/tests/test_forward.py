@@ -683,7 +683,8 @@ def test_causal_softmax_gqa_forward_matches_reference():
 
 def test_softmax_decode_forward_matches_reference():
     _seed()
-    batch, heads, seqlen, kv_len, dim, dim_value = 1, 2, 128, 256, 64, 64
+    # single token decode
+    batch, heads, seqlen, kv_len, dim, dim_value = 1, 2, 1, 256, 64, 64
     module = _build_softmax_decode_attention(
         batch, heads, seqlen, kv_len, dim, dim_value, dtype=DTYPE
     )
@@ -784,7 +785,9 @@ def test_mla_decode_forward_matches_reference():
     torch.testing.assert_close(actual, expected, rtol=RTOL_STRICT, atol=ATOL_STRICT)
 
 
-@pytest.mark.skip(reason="LinearAttentionEngine TileLang templates currently fail pipeline lowering in this environment (ProducerConsumerWS in tl_template/linear/linear_tl.py)")
+@pytest.mark.skip(
+    reason="LinearAttentionEngine TileLang templates currently fail pipeline lowering in this environment (ProducerConsumerWS in tl_template/linear/linear_tl.py)"
+)
 def test_gated_retention_forward_matches_reference():
     _seed()
     batch, heads, seqlen, dim, dim_value = 1, 4, 128, 64, 64
@@ -804,7 +807,9 @@ def test_gated_retention_forward_matches_reference():
     torch.testing.assert_close(actual, expected, rtol=RTOL_LOOSE, atol=ATOL_LOOSE)
 
 
-@pytest.mark.skip(reason="LinearAttentionEngine TileLang templates currently fail pipeline lowering in this environment (ProducerConsumerWS in tl_template/linear/linear_tl.py)")
+@pytest.mark.skip(
+    reason="LinearAttentionEngine TileLang templates currently fail pipeline lowering in this environment (ProducerConsumerWS in tl_template/linear/linear_tl.py)"
+)
 def test_retnet_recurrent_forward_matches_reference():
     _seed()
     batch, heads, seqlen, dim, dim_value = 1, 4, 128, 64, 64
@@ -825,7 +830,9 @@ def test_retnet_recurrent_forward_matches_reference():
     torch.testing.assert_close(actual, expected, rtol=RTOL_LOOSE, atol=ATOL_LOOSE)
 
 
-@pytest.mark.skip(reason="LinearAttentionEngine TileLang templates currently fail pipeline lowering in this environment (ProducerConsumerWS in tl_template/linear/linear_tl.py)")
+@pytest.mark.skip(
+    reason="LinearAttentionEngine TileLang templates currently fail pipeline lowering in this environment (ProducerConsumerWS in tl_template/linear/linear_tl.py)"
+)
 def test_mamba2_forward_matches_reference():
     _seed()
     batch, query_heads, key_heads, value_heads, seqlen, dim, dim_value = (
