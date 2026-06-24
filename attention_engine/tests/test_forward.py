@@ -3,23 +3,10 @@ import math
 import pytest
 import torch
 import torch.nn.functional as F
+from attn_engine import AttentionEngine, LinearAttentionEngine, OnlineFunc
 from benchmark.bench_utils import assert_close
+from core import CustomIO, SymbolScalar, Var, meta_tensor
 from einops import einsum, rearrange, repeat
-
-from examples.gated_retention import gated_retention
-from examples.mamba2 import mamba2
-from examples.mha import causal_softmax_attention
-from examples.mha_decode import softmax_attention_decode
-from examples.mha_v2 import causal_softmax_attention as causal_softmax_attention_v2
-from examples.mla_decode import mla_decode
-from examples.mla_decode_v2 import mla_decode as mla_decode_v2
-from examples.reluattn import relu_attention
-from examples.reluattn_v2 import relu_attention as relu_attention_v2
-from examples.retention_parallel import retention_parallel
-from examples.retnet_recurrent import retnet_recurrent
-from examples.sigmoid_attn import sigmoid_attention
-from examples.sigmoid_attn_v2 import sigmoid_attention as sigmoid_attention_v2
-from examples.sparse_gqa_decode import sparse_gqa_decode
 
 pytestmark = pytest.mark.skipif(
     not torch.cuda.is_available(),
@@ -40,17 +27,356 @@ def _seed() -> None:
     torch.cuda.manual_seed_all(0)
 
 
-def _causal_softmax_ref(
-    query: torch.Tensor,
-    key: torch.Tensor,
-    value: torch.Tensor,
-    softmax_scale: float | None = None,
-) -> torch.Tensor:
+class _OnlineSoftmax(OnlineFunc):
+    def __init__(self):
+        online_rowscales = {
+            "m": SymbolScalar("m", Var("-inf")),
+            "r": SymbolScalar("r", Var("0.0")),
+        }
+        final_rowscales = {
+            "lse": SymbolScalar("lse", Var("0.0")),
+        }
+        super().__init__(online_rowscales, final_rowscales, CustomIO())
+
+    @staticmethod
+    def online_fwd(scores, online_rowscales, b, h, q_idx):
+        m = online_rowscales["m"]
+        r = online_rowscales["r"]
+        m_new = m.max(scores.get_reduce("max"))
+        scale_tmp = (m - m_new).exp()
+        r = r * scale_tmp
+        scores = (scores - m_new).exp()
+        r = r + scores.get_reduce("sum")
+        new_online_rowscales = {
+            "m": m_new,
+            "r": r,
+        }
+        return scores, new_online_rowscales, scale_tmp
+
+    @staticmethod
+    def combine(final_rowscales):
+        lse = final_rowscales["lse"]
+        lse_max = lse.get_reduce("max")
+        row_sum = (lse - lse_max).exp2()
+        row_sum_sum = row_sum.get_reduce("sum")
+        lse_sum = row_sum_sum.log2() + lse_max
+        return (lse - lse_sum).exp2()
+
+    @staticmethod
+    def online_fwd_epilogue(o, online_rowscales, b, h, q_idx):
+        o_new = o / online_rowscales["r"]
+        lse = online_rowscales["r"].log() + online_rowscales["m"]
+        return o_new, {"lse": lse}
+
+    @staticmethod
+    def forward(scores, final_rowscales, b, h, q_idx, kv_idx):
+        lse = final_rowscales["lse"]
+        return (scores - lse).exp()
+
+    @staticmethod
+    def backward(dp, scores, final_rowscales, doosum_rowscales, b, h, q_idx, kv_idx):
+        return (dp - doosum_rowscales) * scores
+
+
+class _OnlineIdentity(OnlineFunc):
+    def __init__(self):
+        super().__init__({}, {}, CustomIO())
+
+    @staticmethod
+    def online_fwd(scores, online_rowscales, b, h, q_idx):
+        return scores, online_rowscales, SymbolScalar("o_scale", Var("1"))
+
+    @staticmethod
+    def online_fwd_epilogue(o, online_rowscales, b, h, q_idx):
+        return o, {}
+
+    @staticmethod
+    def forward(scores, final_rowscales, b, h, q_idx, kv_idx):
+        return scores
+
+    @staticmethod
+    def backward(dp, scores, final_rowscales, doosum_rowscales, b, h, q_idx, kv_idx):
+        return dp
+
+
+class _OnlineRetention(OnlineFunc):
+    def __init__(self):
+        online_rowscales = {
+            "r_wo_clamp": SymbolScalar("r_wo_clamp", Var("0.0")),
+            "r": SymbolScalar("r", Var("0.0")),
+        }
+        final_rowscales = {
+            "r": SymbolScalar("r", Var("0.0")),
+        }
+        super().__init__(online_rowscales, final_rowscales, CustomIO())
+
+    @staticmethod
+    def online_fwd(scores, online_rowscales, b, h, q_idx):
+        r_wo_clamp = online_rowscales["r_wo_clamp"]
+        r = online_rowscales["r"]
+        r_wo_clamp = r_wo_clamp + scores.get_reduce("abssum")
+        r_new = r_wo_clamp.max(1.0)
+        scores = scores / r_new
+        new_online_rowscales = {
+            "r_wo_clamp": r_wo_clamp,
+            "r": r_new,
+        }
+        return scores, new_online_rowscales, r / r_new
+
+    @staticmethod
+    def online_fwd_epilogue(o, online_rowscales, b, h, q_idx):
+        return o, {"r": online_rowscales["r"]}
+
+    @staticmethod
+    def forward(scores, final_rowscales, b, h, q_idx, kv_idx):
+        return scores / final_rowscales["r"]
+
+    @staticmethod
+    def backward(dp, scores, final_rowscales, doosum_rowscales, b, h, q_idx, kv_idx):
+        return dp / final_rowscales["r"]
+
+
+def _causal_mask(b, h, q_idx, kv_idx):
+    return q_idx >= kv_idx
+
+
+def _build_causal_softmax_attention(B, H, S, D, DV, dtype=DTYPE):
+    softmax_scale = 1 / D**0.5
+
+    def score_mod(score, custom_fwd_inputs, b, h, q_idx, kv_idx):
+        return score * softmax_scale
+
+    qkv_meta = (
+        meta_tensor(B, H, S, D, dtype=dtype),
+        meta_tensor(B, H, S, D, dtype=dtype),
+        meta_tensor(B, H, S, DV, dtype=dtype),
+    )
+    return AttentionEngine(
+        qkv_meta,
+        CustomIO({}),
+        score_mod=score_mod,
+        mask_mod=_causal_mask,
+        online_func=_OnlineSoftmax(),
+        infer_mask=True,
+    )
+
+
+def _build_causal_softmax_gqa_attention(B, H, G, S, D, DV, dtype=DTYPE):
+    softmax_scale = 1 / D**0.5
+
+    def score_mod(score, custom_fwd_inputs, b, h, q_idx, kv_idx):
+        return score * softmax_scale
+
+    qkv_meta = (
+        meta_tensor(B, H, S, D, dtype=dtype),
+        meta_tensor(B, G, S, D, dtype=dtype),
+        meta_tensor(B, G, S, DV, dtype=dtype),
+    )
+    return AttentionEngine(
+        qkv_meta,
+        CustomIO({}),
+        score_mod=score_mod,
+        mask_mod=_causal_mask,
+        online_func=_OnlineSoftmax(),
+        infer_mask=True,
+    )
+
+
+def _build_softmax_decode_attention(B, H, S, KV, D, DV, dtype=DTYPE):
+    softmax_scale = 1 / D**0.5
+
+    def score_mod(score, custom_fwd_inputs, b, h, q_idx, kv_idx):
+        return score * softmax_scale
+
+    qkv_meta = (
+        meta_tensor(B, H, ((S + 127) // 128) * 128, D, dtype=dtype),
+        meta_tensor(B, H, KV, D, dtype=dtype),
+        meta_tensor(B, H, KV, DV, dtype=dtype),
+    )
+    return AttentionEngine(
+        qkv_meta,
+        CustomIO({}),
+        score_mod=score_mod,
+        mask_mod=None,
+        online_func=_OnlineSoftmax(),
+    )
+
+
+def _build_sigmoid_attention(B, H, S, D, DV):
+    def score_mod(score, custom_fwd_inputs, b, h, q_idx, kv_idx):
+        softmax_bias = custom_fwd_inputs.input_tensors["softmax_bias"]
+        score = score + softmax_bias
+        return ((score * 0.5).tanh() + 1) * 0.5
+
+    qkv_meta = (
+        meta_tensor(B, H, S, D, dtype=torch.float16),
+        meta_tensor(B, H, S, D, dtype=torch.float16),
+        meta_tensor(B, H, S, DV, dtype=torch.float16),
+    )
+    return AttentionEngine(
+        qkv_meta,
+        CustomIO({"softmax_bias": (1,)}),
+        score_mod=score_mod,
+        mask_mod=_causal_mask,
+        online_func=_OnlineIdentity(),
+    )
+
+
+def _build_relu_attention(B, H, S, D, DV, dtype=DTYPE):
+    scores_scale = 1 / D**0.5
+
+    def score_mod(score, custom_fwd_inputs, b, h, q_idx, kv_idx):
+        return (score * scores_scale).max(0)
+
+    qkv_meta = (
+        meta_tensor(B, H, S, D, dtype=dtype),
+        meta_tensor(B, H, S, D, dtype=dtype),
+        meta_tensor(B, H, S, DV, dtype=dtype),
+    )
+    return AttentionEngine(
+        qkv_meta,
+        CustomIO({}),
+        score_mod=score_mod,
+        mask_mod=None,
+        online_func=_OnlineIdentity(),
+    )
+
+
+def _build_sparse_gqa_decode_attention(B, H, G, S, D, DV, BLOCK=32, dtype=DTYPE):
+    softmax_scale = 1 / D**0.5
+
+    def score_mod(score, custom_fwd_inputs, b, h, q_idx, kv_idx):
+        return score * softmax_scale
+
+    qkv_meta = (
+        meta_tensor(B, H, 1, D, dtype=dtype),
+        meta_tensor(B, G, S, D, dtype=dtype),
+        meta_tensor(B, G, S, DV, dtype=dtype),
+    )
+    return AttentionEngine(
+        qkv_meta,
+        CustomIO({}),
+        score_mod=score_mod,
+        mask_mod=None,
+        online_func=_OnlineSoftmax(),
+        extern_block_mask=True,
+        use_varlen=True,
+        infer_mask_block_N=BLOCK,
+    )
+
+
+def _build_retention_parallel_attention(B, H, S, D, DV, dtype=DTYPE):
+    def score_mod(score, custom_fwd_inputs, b, h, q_idx, kv_idx):
+        mask = custom_fwd_inputs.input_tensors["mask"]
+        return score * mask
+
+    qkv_meta = (
+        meta_tensor(B, H, S, D, dtype=dtype),
+        meta_tensor(B, H, S, D, dtype=dtype),
+        meta_tensor(B, H, S, DV, dtype=dtype),
+    )
+    return AttentionEngine(
+        qkv_meta,
+        CustomIO({"mask": (1, "heads", "seq_len", "seq_len_kv")}),
+        score_mod=score_mod,
+        mask_mod=_causal_mask,
+        online_func=_OnlineRetention(),
+        mask_value="0",
+    )
+
+
+def _build_mla_decode_attention(B, H, SKV, D, DV, HK, HV, dtype=DTYPE):
+    softmax_scale = 1 / D**0.5
+
+    def score_mod(score, custom_fwd_inputs, b, h, q_idx, kv_idx):
+        return score * softmax_scale
+
+    qkv_meta = (
+        meta_tensor(B, H, 1, D, dtype=dtype),
+        meta_tensor(B, HK, SKV, D, dtype=dtype),
+        meta_tensor(B, HV, SKV, DV, dtype=dtype),
+    )
+    return AttentionEngine(
+        qkv_meta,
+        CustomIO({}),
+        score_mod=score_mod,
+        mask_mod=None,
+        online_func=_OnlineSoftmax(),
+        kv_shared=True,
+    )
+
+
+def _build_gated_retention_attention(B, H, S, D, DV, dtype=LINEAR_DTYPE):
+    scale = 1 / D**0.5
+
+    def q_mod(q, custom_io):
+        return q * scale
+
+    qkv_meta = (
+        meta_tensor(B, H, S, D, dtype=dtype),
+        meta_tensor(B, H, S, D, dtype=dtype),
+        meta_tensor(B, H, S, DV, dtype=dtype),
+    )
+    return LinearAttentionEngine(
+        qkv_meta, q_mod=q_mod, custom_io=CustomIO({}), tune=False
+    )
+
+
+def _build_retnet_recurrent_attention(B, H, S, D, DV, dtype=LINEAR_DTYPE):
+    scale = 1 / D**0.5
+
+    def decay_mod(decay, custom_io):
+        return decay.log()
+
+    def q_mod(q, custom_io):
+        return q * scale
+
+    qkv_meta = (
+        meta_tensor(B, H, S, D, dtype=dtype),
+        meta_tensor(B, H, S, D, dtype=dtype),
+        meta_tensor(B, H, S, DV, dtype=dtype),
+    )
+    return LinearAttentionEngine(
+        qkv_meta,
+        q_mod=q_mod,
+        decay_mod=decay_mod,
+        custom_io=CustomIO({}),
+        tune=False,
+    )
+
+
+def _build_mamba2_attention(B, HQ, S, D, DV, HK, HV, dtype=LINEAR_DTYPE):
+    def decay_mod(decay, custom_io):
+        return decay * custom_io.input_tensors["A"]
+
+    def v_mod(v, custom_io):
+        return v * custom_io.input_tensors["dt"]
+
+    qkv_meta = (
+        meta_tensor(B, HQ, S, D, dtype=dtype),
+        meta_tensor(B, HK, S, D, dtype=dtype),
+        meta_tensor(B, HV, S, DV, dtype=dtype),
+    )
+    custom_io = CustomIO(
+        {
+            "A": (1, "heads"),
+            "dt": ("batch", "heads", "seq_len"),
+        }
+    )
+    return LinearAttentionEngine(
+        qkv_meta,
+        decay_mod=decay_mod,
+        v_mod=v_mod,
+        custom_io=custom_io,
+        tune=False,
+    )
+
+
+def _causal_softmax_ref(query, key, value, softmax_scale=None):
     dim = query.shape[-1]
     num_head_groups = query.shape[2] // key.shape[2]
     if softmax_scale is None:
         softmax_scale = 1 / dim**0.5
-
     query = rearrange(query, "b s (h g) d -> b s g h d", g=num_head_groups)
     scores = einsum(query, key, "b s g h d, b t h d -> b g h s t")
     seqlenq = query.shape[1]
@@ -59,36 +385,23 @@ def _causal_softmax_ref(
     mask = mask.unsqueeze(0).unsqueeze(0)
     scores = scores.masked_fill(mask == 0, float("-inf"))
     attention = F.softmax(scores * softmax_scale, dim=-1)
-
     out = einsum(attention, value, "b g h s t, b t h d -> b g h s d")
     return rearrange(out, "b g h s d -> b s (h g) d")
 
 
-def _decode_softmax_ref(
-    query: torch.Tensor,
-    key: torch.Tensor,
-    value: torch.Tensor,
-    softmax_scale: float | None = None,
-) -> torch.Tensor:
+def _decode_softmax_ref(query, key, value, softmax_scale=None):
     dim = query.shape[-1]
     num_head_groups = query.shape[2] // key.shape[2]
     if softmax_scale is None:
         softmax_scale = 1 / dim**0.5
-
     query = rearrange(query, "b s (h g) d -> b s g h d", g=num_head_groups)
     scores = einsum(query, key, "b s g h d, b t h d -> b g h s t")
     attention = F.softmax(scores * softmax_scale, dim=-1)
-
     out = einsum(attention, value, "b g h s t, b t h d -> b g h s d")
     return rearrange(out, "b g h s d -> b s (h g) d")
 
 
-def _sigmoid_ref(
-    query: torch.Tensor,
-    key: torch.Tensor,
-    value: torch.Tensor,
-    sigmoid_bias: torch.Tensor,
-) -> torch.Tensor:
+def _sigmoid_ref(query, key, value, sigmoid_bias):
     num_head_groups = query.shape[2] // key.shape[2]
     grouped_query = rearrange(query, "b s (h g) d -> b s g h d", g=num_head_groups)
     scores = einsum(grouped_query, key, "b s g h d, b t h d -> b g h s t")
@@ -97,15 +410,13 @@ def _sigmoid_ref(
     )
     mask = mask.unsqueeze(0).unsqueeze(0)
     scores = scores.masked_fill(mask == 0, float("-inf"))
-    scores = scores + sigmoid_bias
+    scores = scores + sigmoid_bias.to(scores.dtype)
     attention = (torch.tanh(scores * 0.5) + 1) * 0.5
     expected = einsum(attention, value, "b g h s t, b t h d -> b g h s d")
     return rearrange(expected, "b g h s d -> b s (h g) d")
 
 
-def _relu_ref(
-    query: torch.Tensor, key: torch.Tensor, value: torch.Tensor
-) -> torch.Tensor:
+def _relu_ref(query, key, value):
     dim = query.shape[-1]
     qk = torch.einsum("bqhd,bkhd->bhqk", query, key)
     qk = qk / (dim**0.5)
@@ -113,27 +424,17 @@ def _relu_ref(
     return torch.einsum("bhqk,bkhd->bqhd", qk, value)
 
 
-def _sparse_gqa_decode_ref(
-    query: torch.Tensor,
-    key: torch.Tensor,
-    value: torch.Tensor,
-    block_mask: torch.Tensor,
-    cache_seqlens: torch.Tensor,
-    block_size: int,
-) -> torch.Tensor:
+def _sparse_gqa_decode_ref(query, key, value, block_mask, cache_seqlens, block_size):
     query = query.squeeze(1)
     batch, heads, dim = query.shape
     heads_kv = key.shape[2]
     num_blocks = block_mask.shape[-1]
-
     num_head_groups = heads // heads_kv
     scale = dim**0.5
     key = rearrange(key, "b n h d -> b h n d")
     value = rearrange(value, "b n h d -> b h n d")
     query = rearrange(query, "b (h g) d -> b g h d", g=num_head_groups)
-
     scores = einsum(query, key, "b g h d, b h s d -> b g h s")
-
     sparse_mask = torch.zeros_like(scores)
     for batch_idx in range(batch):
         for head_idx in range(heads_kv):
@@ -142,27 +443,18 @@ def _sparse_gqa_decode_ref(
                     start = block_idx * block_size
                     end = (block_idx + 1) * block_size
                     sparse_mask[batch_idx, :, head_idx, start:end] = 1
-
     scores = scores.masked_fill(sparse_mask == 0, float("-inf"))
-
     range_len = torch.arange(scores.shape[-1], device=query.device).unsqueeze(0)
     cache_seqlens_expanded = cache_seqlens.unsqueeze(1)
     pad_mask = range_len >= cache_seqlens_expanded
     pad_mask = pad_mask[:, None, None, :]
     scores = scores.masked_fill(pad_mask, float("-inf"))
     attention = F.softmax(scores / scale, dim=-1)
-
     out = einsum(attention, value, "b g h s, b h s d -> b g h d")
     return rearrange(out, "b g h d -> b (h g) d")
 
 
-def _deterministic_block_mask(
-    batch: int,
-    heads_kv: int,
-    max_cache_seqlen: int,
-    block_size: int,
-    device: str,
-) -> torch.Tensor:
+def _deterministic_block_mask(batch, heads_kv, max_cache_seqlen, block_size, device):
     num_blocks = (max_cache_seqlen + block_size - 1) // block_size
     block_mask = torch.zeros(
         (batch, heads_kv, num_blocks), dtype=torch.bool, device=device
@@ -173,24 +465,17 @@ def _deterministic_block_mask(
     return block_mask
 
 
-def _mla_decode_ref(
-    query: torch.Tensor,
-    query_pe: torch.Tensor,
-    key_value: torch.Tensor,
-    key_pe: torch.Tensor,
-) -> torch.Tensor:
+def _mla_decode_ref(query, query_pe, key_value, key_pe):
     query = query.squeeze(1)
     query_pe = query_pe.squeeze(1)
     dim = query.shape[-1]
     pe_dim = query_pe.shape[-1]
     num_head_groups = query.shape[1] // key_value.shape[2]
     scale = (dim + pe_dim) ** 0.5
-
     query = rearrange(query, "b (h g) d -> b g h d", g=num_head_groups)
     query_pe = rearrange(query_pe, "b (h g) d -> b g h d", g=num_head_groups)
     key_value = rearrange(key_value, "b n h d -> b h n d")
     key_pe = rearrange(key_pe, "b n h d -> b h n d")
-
     full_query = torch.concat([query, query_pe], dim=-1)
     full_key = torch.concat([key_value, key_pe], dim=-1)
     scores = einsum(full_query, full_key, "b g h d, b h s d -> b g h s")
@@ -200,33 +485,20 @@ def _mla_decode_ref(
     return out.unsqueeze(1)
 
 
-def _retention_parallel_ref(
-    query: torch.Tensor,
-    key: torch.Tensor,
-    value: torch.Tensor,
-    mask: torch.Tensor,
-) -> torch.Tensor:
+def _retention_parallel_ref(query, key, value, mask):
     qk = torch.einsum("bqhd,bkhd->bhqk", query, key)
-    masked_scores = qk * mask
-    rowsum = masked_scores.detach().abs().sum(dim=-1, keepdim=True).clamp(min=1.0)
-    return torch.einsum("bhqk,bkhd->bqhd", masked_scores / rowsum, value)
+    qkm = qk * mask
+    rowsum = qkm.detach().abs().sum(dim=-1, keepdim=True).clamp(min=1.0)
+    return torch.einsum("bhqk,bkhd->bqhd", qkm / rowsum, value)
 
 
-def _naive_chunk_simple_gla(
-    query: torch.Tensor,
-    key: torch.Tensor,
-    value: torch.Tensor,
-    gate: torch.Tensor,
-    chunk_size: int = 64,
-    scale: float | None = None,
-) -> torch.Tensor:
+def _naive_chunk_simple_gla(query, key, value, gate, chunk_size=64, scale=None):
     query = query.to(torch.float32)
     key = key.to(torch.float32)
     value = value.to(torch.float32)
     gate = gate.to(torch.float32)
     if scale is None:
         scale = 1.0 / query.shape[-1] ** 0.5
-
     total_steps = query.shape[-2]
     pad_len = (chunk_size - (total_steps % chunk_size)) % chunk_size
     if pad_len > 0:
@@ -234,7 +506,6 @@ def _naive_chunk_simple_gla(
         key = F.pad(key, (0, 0, 0, pad_len))
         value = F.pad(value, (0, 0, 0, pad_len))
         gate = F.pad(gate, (0, pad_len))
-
     batch, heads, padded_steps, dim = query.shape
     dim_value = value.shape[-1]
     query = query * scale
@@ -262,13 +533,10 @@ def _naive_chunk_simple_gla(
             state * end_decay.exp()[..., None]
             + (key_chunk * key_scale).transpose(-1, -2) @ value_chunk
         )
-
     return rearrange(output, "b h n c d -> b h (n c) d")[:, :, :total_steps]
 
 
-def _retnet_recurrent_ref(
-    query: torch.Tensor, key: torch.Tensor, value: torch.Tensor
-) -> torch.Tensor:
+def _retnet_recurrent_ref(query, key, value):
     orig_type = query.dtype
     query = query.float()
     key = key.float()
@@ -289,20 +557,8 @@ def _retnet_recurrent_ref(
     return torch.einsum("bhqk,bhkd->bhqd", scores, value).to(orig_type)
 
 
-def _mamba2_ref(
-    value: torch.Tensor,
-    delta_t: torch.Tensor,
-    a_param: torch.Tensor,
-    key: torch.Tensor,
-    query: torch.Tensor,
-    chunk_size: int = 64,
-) -> torch.Tensor:
-    def chunk_state_ref(
-        b_tensor: torch.Tensor,
-        x_tensor: torch.Tensor,
-        dt_tensor: torch.Tensor,
-        d_a_cumsum: torch.Tensor,
-    ) -> torch.Tensor:
+def _mamba2_ref(value, delta_t, a_param, key, query, chunk_size=64):
+    def chunk_state_ref(b_tensor, x_tensor, dt_tensor, d_a_cumsum):
         batch, seqlen, nheads, headdim = x_tensor.shape
         dstate = b_tensor.shape[-1]
         _, _, nchunks, local_chunk = dt_tensor.shape
@@ -321,9 +577,7 @@ def _mamba2_ref(
             x_tensor,
         )
 
-    def state_passing_ref(
-        states: torch.Tensor, d_a_chunk_cumsum: torch.Tensor
-    ) -> tuple[torch.Tensor, torch.Tensor]:
+    def state_passing_ref(states, d_a_chunk_cumsum):
         initial_states = torch.zeros_like(states[:, 0])
         states = torch.cat(
             [rearrange(initial_states, "b h d -> b 1 h d"), states], dim=1
@@ -345,13 +599,8 @@ def _mamba2_ref(
         return out[:, :-1], out[:, -1]
 
     def chunk_scan_ref(
-        b_tensor: torch.Tensor,
-        c_tensor: torch.Tensor,
-        x_tensor: torch.Tensor,
-        dt_tensor: torch.Tensor,
-        d_a_cumsum: torch.Tensor,
-        prev_states: torch.Tensor,
-    ) -> torch.Tensor:
+        b_tensor, c_tensor, x_tensor, dt_tensor, d_a_cumsum, prev_states
+    ):
         batch, seqlen, nheads, _ = x_tensor.shape
         _, _, ngroups, _ = b_tensor.shape
         _, _, nchunks, local_chunk = dt_tensor.shape
@@ -407,121 +656,71 @@ def _mamba2_ref(
 def test_causal_softmax_attention_forward_matches_reference():
     _seed()
     batch, heads, seqlen, dim, dim_value = 1, 2, 128, 64, 64
-    module = causal_softmax_attention(
-        batch, heads, seqlen, dim, dim_value, dtype=DTYPE, tune=False
+    module = _build_causal_softmax_attention(
+        batch, heads, seqlen, dim, dim_value, dtype=DTYPE
     )
-
     query = torch.randn(batch, seqlen, heads, dim, device=DEVICE, dtype=DTYPE)
     key = torch.randn(batch, seqlen, heads, dim, device=DEVICE, dtype=DTYPE)
     value = torch.randn(batch, seqlen, heads, dim_value, device=DEVICE, dtype=DTYPE)
-
     expected = _causal_softmax_ref(query, key, value)
     actual = module(query, key, value)
-
     torch.testing.assert_close(actual, expected, rtol=RTOL_STRICT, atol=ATOL_STRICT)
 
 
-def test_causal_softmax_attention_v2_forward_matches_reference():
+def test_causal_softmax_gqa_forward_matches_reference():
     _seed()
-    batch, heads, seqlen, dim, dim_value = 1, 2, 128, 64, 64
-    module = causal_softmax_attention_v2(
-        batch, heads, seqlen, dim, dim_value, dtype=DTYPE
+    batch, heads, groups, seqlen, dim, dim_value = 1, 4, 2, 128, 64, 64
+    module = _build_causal_softmax_gqa_attention(
+        batch, heads, groups, seqlen, dim, dim_value, dtype=DTYPE
     )
-
     query = torch.randn(batch, seqlen, heads, dim, device=DEVICE, dtype=DTYPE)
-    key = torch.randn(batch, seqlen, heads, dim, device=DEVICE, dtype=DTYPE)
-    value = torch.randn(batch, seqlen, heads, dim_value, device=DEVICE, dtype=DTYPE)
-
+    key = torch.randn(batch, seqlen, groups, dim, device=DEVICE, dtype=DTYPE)
+    value = torch.randn(batch, seqlen, groups, dim_value, device=DEVICE, dtype=DTYPE)
     expected = _causal_softmax_ref(query, key, value)
     actual = module(query, key, value)
-
     torch.testing.assert_close(actual, expected, rtol=RTOL_STRICT, atol=ATOL_STRICT)
 
 
 def test_softmax_decode_forward_matches_reference():
     _seed()
-    batch, heads, seqlen, kv_len, dim, dim_value = 1, 2, 1, 128, 64, 64
-    module = softmax_attention_decode(
+    batch, heads, seqlen, kv_len, dim, dim_value = 1, 2, 128, 256, 64, 64
+    module = _build_softmax_decode_attention(
         batch, heads, seqlen, kv_len, dim, dim_value, dtype=DTYPE
     )
-
     query = torch.randn(batch, seqlen, heads, dim, device=DEVICE, dtype=DTYPE)
     key = torch.randn(batch, kv_len, heads, dim, device=DEVICE, dtype=DTYPE)
     value = torch.randn(batch, kv_len, heads, dim_value, device=DEVICE, dtype=DTYPE)
-
     expected = _decode_softmax_ref(query, key, value)
     actual = module(query, key, value)
-
     torch.testing.assert_close(actual, expected, rtol=RTOL_STRICT, atol=ATOL_STRICT)
 
 
 def test_sigmoid_attention_forward_matches_reference():
     _seed()
     batch, heads, seqlen, dim, dim_value = 1, 2, 128, 64, 64
-    module = sigmoid_attention(batch, heads, seqlen, dim, dim_value, tune=False)
-
+    module = _build_sigmoid_attention(batch, heads, seqlen, dim, dim_value)
     query = torch.randn(batch, seqlen, heads, dim, device=DEVICE, dtype=DTYPE)
     key = torch.randn(batch, seqlen, heads, dim, device=DEVICE, dtype=DTYPE)
     value = torch.randn(batch, seqlen, heads, dim_value, device=DEVICE, dtype=DTYPE)
-    sigmoid_bias = torch.tensor([0.25], device=DEVICE, dtype=torch.float32)
-
+    sigmoid_bias = torch.tensor([1.0], device=DEVICE, dtype=torch.float32).uniform_(
+        -10.0, 2.0
+    )
     expected = _sigmoid_ref(query, key, value, sigmoid_bias)
     actual = module(query, key, value, sigmoid_bias)
-
-    torch.testing.assert_close(actual, expected, rtol=RTOL_LOOSE, atol=ATOL_LOOSE)
-
-
-def test_sigmoid_attention_v2_forward_matches_reference():
-    _seed()
-    batch, heads, seqlen, dim, dim_value = 1, 2, 128, 64, 64
-    module = sigmoid_attention_v2(batch, heads, seqlen, dim, dim_value, dtype=DTYPE)
-
-    query = torch.randn(batch, seqlen, heads, dim, device=DEVICE, dtype=DTYPE)
-    key = torch.randn(batch, seqlen, heads, dim, device=DEVICE, dtype=DTYPE)
-    value = torch.randn(batch, seqlen, heads, dim_value, device=DEVICE, dtype=DTYPE)
-    sigmoid_bias = torch.tensor([0.25], device=DEVICE, dtype=torch.float32)
-
-    expected = _sigmoid_ref(query, key, value, sigmoid_bias)
-    actual = module(query, key, value, sigmoid_bias)
-
     torch.testing.assert_close(actual, expected, rtol=RTOL_LOOSE, atol=ATOL_LOOSE)
 
 
 def test_relu_attention_forward_matches_reference():
     _seed()
     batch, heads, seqlen, dim, dim_value = 1, 2, 128, 64, 64
-    module = relu_attention(
-        batch, heads, seqlen, dim, dim_value, dtype=DTYPE, tune=False
-    )
-
+    module = _build_relu_attention(batch, heads, seqlen, dim, dim_value, dtype=DTYPE)
     query = torch.randn(batch, seqlen, heads, dim, device=DEVICE, dtype=DTYPE)
     key = 0.5 * torch.randn(batch, seqlen, heads, dim, device=DEVICE, dtype=DTYPE)
     value = 0.5 * torch.randn(
         batch, seqlen, heads, dim_value, device=DEVICE, dtype=DTYPE
     )
-
     expected = _relu_ref(query, key, value)
     actual = module(query, key, value)
-
-    assert_close(
-        actual, expected, rtol=RTOL_LOOSE, atol=ATOL_LOOSE, mismatch_ratio=1e-3
-    )
-
-
-def test_relu_attention_v2_forward_matches_reference():
-    _seed()
-    batch, heads, seqlen, dim, dim_value = 1, 2, 128, 64, 64
-    module = relu_attention_v2(batch, heads, seqlen, dim, dim_value, dtype=DTYPE)
-
-    query = torch.randn(batch, seqlen, heads, dim, device=DEVICE, dtype=DTYPE)
-    key = 0.5 * torch.randn(batch, seqlen, heads, dim, device=DEVICE, dtype=DTYPE)
-    value = 0.5 * torch.randn(
-        batch, seqlen, heads, dim_value, device=DEVICE, dtype=DTYPE
-    )
-
-    expected = _relu_ref(query, key, value)
-    actual = module(query, key, value)
-
     assert_close(
         actual, expected, rtol=RTOL_LOOSE, atol=ATOL_LOOSE, mismatch_ratio=1e-3
     )
@@ -530,95 +729,29 @@ def test_relu_attention_v2_forward_matches_reference():
 def test_sparse_gqa_decode_forward_matches_reference():
     _seed()
     batch, heads, groups, seqlen, dim, dim_value, block = 1, 4, 2, 128, 64, 64, 32
-    module = sparse_gqa_decode(
-        batch, heads, groups, seqlen, dim, dim_value, dtype=DTYPE, BLOCK=block
+    module = _build_sparse_gqa_decode_attention(
+        batch, heads, groups, seqlen, dim, dim_value, BLOCK=block, dtype=DTYPE
     )
-
     query = torch.randn(batch, 1, heads, dim, device=DEVICE, dtype=DTYPE)
     key = torch.randn(batch, seqlen, groups, dim, device=DEVICE, dtype=DTYPE)
     value = torch.randn(batch, seqlen, groups, dim_value, device=DEVICE, dtype=DTYPE)
     cache_seqlens = torch.full((batch,), seqlen, dtype=torch.int32, device=DEVICE)
     block_mask = _deterministic_block_mask(batch, groups, seqlen, block, DEVICE)
-
     expected = _sparse_gqa_decode_ref(
         query, key, value, block_mask, cache_seqlens, block
     )
     actual = module(
         query, key, value, block_mask=block_mask, cache_seqlens=cache_seqlens
     )
-
     torch.testing.assert_close(actual, expected, rtol=RTOL_LOOSE, atol=ATOL_LOOSE)
-
-
-def test_mla_decode_forward_matches_reference():
-    _seed()
-    batch, heads, kv_heads, seqlen, dim, dim_value = 1, 4, 1, 128, 80, 64
-    module = mla_decode(
-        batch,
-        heads,
-        seqlen,
-        dim,
-        dim_value,
-        HK=kv_heads,
-        HV=kv_heads,
-        dtype=DTYPE,
-        tune=False,
-    )
-
-    query = torch.randn(batch, 1, heads, dim_value, device=DEVICE, dtype=DTYPE)
-    query_pe = torch.randn(batch, 1, heads, dim - dim_value, device=DEVICE, dtype=DTYPE)
-    key_value = torch.randn(
-        batch, seqlen, kv_heads, dim_value, device=DEVICE, dtype=DTYPE
-    )
-    key_pe = torch.randn(
-        batch, seqlen, kv_heads, dim - dim_value, device=DEVICE, dtype=DTYPE
-    )
-
-    expected = _mla_decode_ref(query, query_pe, key_value, key_pe)
-    actual = module(query, query_pe, key_value, key_pe)
-
-    torch.testing.assert_close(actual, expected, rtol=RTOL_STRICT, atol=ATOL_STRICT)
-
-
-def test_mla_decode_v2_forward_matches_reference():
-    _seed()
-    batch, heads, kv_heads, seqlen, dim, dim_value = 1, 4, 1, 128, 80, 64
-    module = mla_decode_v2(
-        batch,
-        heads,
-        seqlen,
-        dim,
-        dim_value,
-        HK=kv_heads,
-        HV=kv_heads,
-        SQ=1,
-        dtype=LINEAR_DTYPE,
-    )
-
-    query = torch.randn(batch, 1, heads, dim_value, device=DEVICE, dtype=LINEAR_DTYPE)
-    query_pe = torch.randn(
-        batch, 1, heads, dim - dim_value, device=DEVICE, dtype=LINEAR_DTYPE
-    )
-    key_value = torch.randn(
-        batch, seqlen, kv_heads, dim_value, device=DEVICE, dtype=LINEAR_DTYPE
-    )
-    key_pe = torch.randn(
-        batch, seqlen, kv_heads, dim - dim_value, device=DEVICE, dtype=LINEAR_DTYPE
-    )
-
-    expected = _mla_decode_ref(query, query_pe, key_value, key_pe)
-    actual = module(query, query_pe, key_value, key_pe)
-
-    torch.testing.assert_close(actual, expected, rtol=RTOL_STRICT, atol=ATOL_STRICT)
 
 
 def test_retention_parallel_forward_matches_reference():
     _seed()
-    batch, heads, seqlen, dim, dim_value = 1, 2, 64, 32, 32
-    module = retention_parallel(
-        batch, heads, seqlen, dim, dim_value, dtype=DTYPE, tune=False
+    batch, heads, seqlen, dim, dim_value = 1, 8, 128, 64, 64
+    module = _build_retention_parallel_attention(
+        batch, heads, seqlen, dim, dim_value, dtype=DTYPE
     )
-
     query = torch.randn(batch, seqlen, heads, dim, device=DEVICE, dtype=DTYPE)
     key = torch.randn(batch, seqlen, heads, dim, device=DEVICE, dtype=DTYPE)
     value = torch.randn(batch, seqlen, heads, dim_value, device=DEVICE, dtype=DTYPE)
@@ -627,20 +760,36 @@ def test_retention_parallel_forward_matches_reference():
         .tril()
         .contiguous()
     )
-
     expected = _retention_parallel_ref(query, key, value, mask)
     actual = module(query, key, value, mask)
-
     torch.testing.assert_close(actual, expected, rtol=RTOL_LOOSE, atol=ATOL_LOOSE)
+
+
+def test_mla_decode_forward_matches_reference():
+    _seed()
+    batch, heads, kv_heads, seqlen, dim, dim_value = 1, 64, 1, 128, 128, 64
+    module = _build_mla_decode_attention(
+        batch, heads, seqlen, dim, dim_value, HK=kv_heads, HV=kv_heads, dtype=DTYPE
+    )
+    query = torch.randn(batch, 1, heads, dim_value, device=DEVICE, dtype=DTYPE)
+    query_pe = torch.randn(batch, 1, heads, dim - dim_value, device=DEVICE, dtype=DTYPE)
+    key_value = torch.randn(
+        batch, seqlen, kv_heads, dim_value, device=DEVICE, dtype=DTYPE
+    )
+    key_pe = torch.randn(
+        batch, seqlen, kv_heads, dim - dim_value, device=DEVICE, dtype=DTYPE
+    )
+    expected = _mla_decode_ref(query, query_pe, key_value, key_pe)
+    actual = module(query, query_pe, key_value, key_pe)
+    torch.testing.assert_close(actual, expected, rtol=RTOL_STRICT, atol=ATOL_STRICT)
 
 
 def test_gated_retention_forward_matches_reference():
     _seed()
-    batch, heads, seqlen, dim, dim_value = 1, 2, 64, 32, 32
-    module = gated_retention(
-        batch, heads, seqlen, dim, dim_value, dtype=LINEAR_DTYPE, tune=False
+    batch, heads, seqlen, dim, dim_value = 1, 4, 128, 64, 64
+    module = _build_gated_retention_attention(
+        batch, heads, seqlen, dim, dim_value, dtype=LINEAR_DTYPE
     )
-
     query = torch.randn(batch, heads, seqlen, dim, device=DEVICE, dtype=LINEAR_DTYPE)
     key = torch.randn(batch, heads, seqlen, dim, device=DEVICE, dtype=LINEAR_DTYPE)
     gate = F.logsigmoid(
@@ -649,20 +798,17 @@ def test_gated_retention_forward_matches_reference():
     value = torch.randn(
         batch, heads, seqlen, dim_value, device=DEVICE, dtype=LINEAR_DTYPE
     )
-
     expected = _naive_chunk_simple_gla(query, key, value, gate).to(LINEAR_DTYPE)
     actual = module(query, key, value, gate)
-
     torch.testing.assert_close(actual, expected, rtol=RTOL_LOOSE, atol=ATOL_LOOSE)
 
 
 def test_retnet_recurrent_forward_matches_reference():
     _seed()
-    batch, heads, seqlen, dim, dim_value = 1, 2, 64, 32, 32
-    module = retnet_recurrent(
-        batch, heads, seqlen, dim, dim_value, dtype=LINEAR_DTYPE, tune=False
+    batch, heads, seqlen, dim, dim_value = 1, 4, 128, 64, 64
+    module = _build_retnet_recurrent_attention(
+        batch, heads, seqlen, dim, dim_value, dtype=LINEAR_DTYPE
     )
-
     query = torch.randn(batch, heads, seqlen, dim, device=DEVICE, dtype=LINEAR_DTYPE)
     key = 0.1 * torch.randn(
         batch, heads, seqlen, dim, device=DEVICE, dtype=LINEAR_DTYPE
@@ -672,10 +818,8 @@ def test_retnet_recurrent_forward_matches_reference():
     value = torch.randn(
         batch, heads, seqlen, dim_value, device=DEVICE, dtype=LINEAR_DTYPE
     )
-
     expected = _retnet_recurrent_ref(query, key, value)
     actual = module(query, key, value, gate)
-
     torch.testing.assert_close(actual, expected, rtol=RTOL_LOOSE, atol=ATOL_LOOSE)
 
 
@@ -685,12 +829,12 @@ def test_mamba2_forward_matches_reference():
         1,
         1,
         1,
-        2,
+        1,
+        128,
         64,
-        32,
-        16,
+        64,
     )
-    module = mamba2(
+    module = _build_mamba2_attention(
         batch,
         query_heads,
         seqlen,
@@ -699,9 +843,7 @@ def test_mamba2_forward_matches_reference():
         HK=key_heads,
         HV=value_heads,
         dtype=LINEAR_DTYPE,
-        tune=False,
     )
-
     query = torch.randn(
         batch, seqlen, query_heads, dim, device=DEVICE, dtype=LINEAR_DTYPE
     )
@@ -725,13 +867,11 @@ def test_mamba2_forward_matches_reference():
     dt_base = torch.clamp(dt_base, min=1e-4)
     dt_bias = dt_base + torch.log(-torch.expm1(-dt_base))
     delta_t = F.softplus(dt_seed + dt_bias)
-
     query_ours = query.transpose(1, 2).contiguous()
     key_ours = key.transpose(1, 2).contiguous()
     value_ours = value.transpose(1, 2).contiguous()
     a_ours = a_param[None, :].contiguous()
     delta_t_ours = delta_t.transpose(1, 2).contiguous()
-
     expected = _mamba2_ref(value, delta_t, a_param, key, query).to(LINEAR_DTYPE)
     actual = module(
         query_ours,
@@ -741,7 +881,6 @@ def test_mamba2_forward_matches_reference():
         a_ours,
         delta_t_ours.to(LINEAR_DTYPE),
     )
-
     assert_close(
         actual.transpose(1, 2),
         expected,
