@@ -231,6 +231,7 @@ class lowerOutput:
     # problem shape
     BATCH: str = "1"
     HEADS: str = "1"
+    KV_HEADS: str = "1"
     SEQ_LEN: str = "1"
     DIM: str = "1"
     DIMV: str = "1"
@@ -789,6 +790,7 @@ def lower_tl(
     custom_fwd_inputs,
     Batch,
     head,
+    head_kv,
     seqlen,
     dimqk,
     dimv,
@@ -805,10 +807,12 @@ def lower_tl(
     # convert 0 to symbolic
     Batch = f"T.symbolic('{Batch}')" if isinstance(Batch, str) else Batch
     head = f"T.symbolic('{head}')" if isinstance(head, str) else head
+    head_kv = f"T.symbolic('{head_kv}')" if isinstance(head_kv, str) else head_kv
     seqlen = f"T.symbolic('{seqlen}')" if isinstance(seqlen, str) else seqlen
     lower_output = lowerOutput(
         BATCH=str(Batch),
         HEADS=str(head),
+        KV_HEADS=str(head_kv),
         SEQ_LEN=str(seqlen),
         DIM=str(dimqk),
         DIMV=str(dimv),

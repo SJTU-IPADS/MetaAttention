@@ -377,6 +377,7 @@ class AttentionEngine:
         # gqa forward & backward
         if q_seqlen == kv_len and head > head_kv:
             from core.lower.lower_gqa import lower_tl
+<<<<<<< HEAD
 
             tl_code, block_mask = lower_tl(
                 score_mod,
@@ -397,6 +398,23 @@ class AttentionEngine:
                 tune_bwd=tune_bwd,
                 tune_file_bwd=tune_file_bwd,
             )
+=======
+            tl_code, block_mask = lower_tl(score_mod,
+                                mask_mod,
+                                online_func,
+                                custom_fwd_inputs,
+                                qkv_meta[0].shape[0], # B
+                                qkv_meta[0].shape[1], # H
+                                head_kv,
+                                q_seqlen, # S
+                                qkv_meta[0].shape[3],
+                                qkv_meta[2].shape[3],
+                                tl_dtype_map[qkv_meta[0].dtype],
+                                mask_value,
+                                tuned_config, infer_mask,
+                                tune=tune, tune_file=tune_file,
+                                tune_bwd=tune_bwd, tune_file_bwd=tune_file_bwd)
+>>>>>>> 8219be7 (feat(lower_gqa): add kv_heads in metadata)
             return tl_code, block_mask
 
     def _compile_tl(

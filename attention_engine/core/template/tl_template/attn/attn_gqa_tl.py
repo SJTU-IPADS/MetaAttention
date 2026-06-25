@@ -348,25 +348,51 @@ def flashattn_bwd(batch, heads, seq_len, seq_len_kv, dim_qk, dimv, is_casual,
 
 
 # TL_INFERFACE = """
+# forward
+tuned_config = {
+    'block_M': {{block_M}},
+    'block_N': {{block_N}},
+    'num_stages': {{stages}},
+    'thread_num': {{thread_num}},
+    'groups': {{HEADS}} // {{KV_HEADS}},
+    'is_causal': {{is_inf_mask}},
+    'shared_fuse': {{shared_fuse}},
+}
+
+program = kernel(
+    {{BATCH}}, {{HEADS}}, {{SEQ_LEN}}, {{SEQ_LEN}}, {{DIM}}, {{DIMV}}
+)
+mod = tl.compile(
+    program(**tuned_config),
+    out_idx={{output_idx_list}},
+)
+
+mod_prep = tl.compile(
+    flashattn_bwd_preprocess({{BATCH}}, {{HEADS}}, {{SEQ_LEN}}, {{DIM}}, {{DIMV}}),
+    out_idx=[2],
+)
+mod_post = tl.compile(
+    flashattn_bwd_postprocess({{BATCH}}, {{HEADS}}, {{SEQ_LEN}}, {{DIM}}, {{DIM}}),
+    out_idx=[1],
+)
+program_bwd = flashattn_bwd(
+    {{BATCH}}, {{HEADS}}, {{SEQ_LEN}}, {{SEQ_LEN}}, {{DIM}}, {{DIMV}}, {{is_inf_mask}}
+)
+mod_bwd = tl.compile(
+    program_bwd(
+        block_M={{block_M_bwd}},
+        block_N={{block_N_bwd}},
+        thread_num={{thread_num_bwd}},
+        groups={{HEADS}} // {{KV_HEADS}},
+    ),
+    out_idx={{bwd_output_idx_list}},
+)
+
 class _attention(torch.autograd.Function):
     @staticmethod
     def forward(ctx, q, k, v, *custom_fwd_inputs):
-        BATCH, N_CTX, H, D_HEAD = q.shape
-        _, N_CTXKV, G, D_HEAD_V = v.shape
         output_idx_list = {{output_idx_list}}
-        program = kernel(BATCH, H, N_CTX, N_CTXKV, D_HEAD, D_HEAD_V)
-        mod = tl.compile(
-            program(
-                block_M={{block_M}},
-                block_N={{block_N}},
-                num_stages={{stages}},
-                thread_num={{thread_num}},
-                groups=H // G,
-                is_causal={{is_inf_mask}},
-                shared_fuse={{shared_fuse}},
-            ),
-            out_idx=output_idx_list,
-        )
+        global mod
         if len(output_idx_list) == 1:
             o = mod(q, k, v, *custom_fwd_inputs)
             final_scale = []
@@ -381,30 +407,9 @@ class _attention(torch.autograd.Function):
         maybe_contiguous = lambda x: x.contiguous() if x.stride(-1) != 1 else x
         do, q, k, v, o = [maybe_contiguous(x) for x in (do, q, k, v, o)]
 
-        BATCH, N_CTX, H, D_HEAD_QK = q.shape
-        _, N_CTXKV, G, D_HEAD_V = v.shape
-        mod_prep = tl.compile(
-            flashattn_bwd_preprocess(BATCH, H, N_CTX, D_HEAD_QK, D_HEAD_V),
-            out_idx=[2],
-        )
-        mod_post = tl.compile(
-            flashattn_bwd_postprocess(BATCH, H, N_CTX, D_HEAD_QK, D_HEAD_QK),
-            out_idx=[1],
-        )
+        global mod_prep, mod_post, mod_bwd
         if {{isused_doosum}}:
             delta = mod_prep(o, do)
-        output_idx_list = {{bwd_output_idx_list}}
-        program_bwd = flashattn_bwd(BATCH, H, N_CTX, N_CTXKV, D_HEAD_QK, D_HEAD_V, {{is_inf_mask}})
-        mod_bwd = tl.compile(
-            program_bwd(
-                block_M={{block_M_bwd}},
-                block_N={{block_N_bwd}},
-                num_stages=1,
-                thread_num={{thread_num_bwd}},
-                groups=H // G,
-            ),
-            out_idx=output_idx_list,
-        )
         if {{isused_doosum}}:
             dq, dk, dv = mod_bwd(q, k, v, do, *tmp, delta)
         else:
