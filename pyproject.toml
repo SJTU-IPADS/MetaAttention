@@ -62,6 +62,23 @@ tilelang = { git = "https://github.com/tile-ai/tilelang.git", rev = "41b95a5dfaf
 
 [dependency-groups]
 dev = [
+    "prek>=0.4.5",
     "pytest>=9.1.1",
     "ruff>=0.15.19",
 ]
+
+[tool.ruff]
+exclude = [
+  "attention_engine/core/template/cute_template",
+  "attention_engine/core/template/cute_template_v2",
+  "attention_engine/core/template/cute_template_kvshared",
+  "attention_engine/core/template/tl_template",
+]
+
+[tool.ruff.lint.per-file-ignores]
+"attention_engine/core/lower/lower.py" = ["F403", "F405"]
+"attention_engine/core/lower/lower_gqa.py" = ["F403", "F405"]
+"attention_engine/core/lower/lower_decode.py" = ["F403", "F405", "E402"]
+"attention_engine/core/lower/lower_decode_gqa.py" = ["F403", "F405", "E402"]
+"attention_engine/core/transform/core.py" = ["F403", "F405"]
+"ref/flash_mla_decode_triton.py" = ["E741"]

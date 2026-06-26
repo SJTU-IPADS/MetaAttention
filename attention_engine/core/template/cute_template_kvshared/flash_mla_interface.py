@@ -13,7 +13,9 @@ cc_flag = []
 cc_flag.append("-gencode")
 cc_flag.append("arch=compute_90a,code=sm_90a")
 
-repo_dir = Path(os.path.join(os.path.dirname(os.path.abspath(__file__)), "../../../../"))
+repo_dir = Path(
+    os.path.join(os.path.dirname(os.path.abspath(__file__)), "../../../../")
+)
 cutlass_dir = repo_dir / "3rd_parties" / "cutlass_39"
 
 sources = [
@@ -23,10 +25,14 @@ sources = [
     os.path.join(os.path.dirname(__file__), "kernels", "splitkv_mla.cu"),
 ]
 flash_mla_cuda = torch.utils.cpp_extension.load(
-    name="flash_mla_hopper_cuda"+"{{dimqk}}_{{dimv}}_{{cutlass_dtype}}".replace("::", "_").replace(" ", "_"),
+    name="flash_mla_hopper_cuda"
+    + "{{dimqk}}_{{dimv}}_{{cutlass_dtype}}".replace("::", "_").replace(" ", "_"),
     sources=sources,
     extra_cflags=[
-        "-O3", "-std=c++17", "-DNDEBUG", "-Wno-deprecated-declarations",
+        "-O3",
+        "-std=c++17",
+        "-DNDEBUG",
+        "-Wno-deprecated-declarations",
         # "-DFLASH_MLA_DISABLE_FP16"
     ],
     extra_cuda_cflags=[
@@ -44,8 +50,9 @@ flash_mla_cuda = torch.utils.cpp_extension.load(
         "--use_fast_math",
         "--ptxas-options=-v,--register-usage-level=10",
         # "-DFLASH_MLA_DISABLE_FP16",
-        "-lineinfo"
-    ] + cc_flag,
+        "-lineinfo",
+    ]
+    + cc_flag,
     extra_include_paths=[
         str(cutlass_dir / "include"),
     ],
@@ -69,7 +76,9 @@ def get_mla_metadata(
         tile_scheduler_metadata: (num_sm_parts, TileSchedulerMetaDataSize), dtype torch.int32.
         num_splits: (batch_size + 1), dtype torch.int32.
     """
-    return flash_mla_cuda.get_mla_metadata(cache_seqlens, num_heads_per_head_k, num_heads_k)
+    return flash_mla_cuda.get_mla_metadata(
+        cache_seqlens, num_heads_per_head_k, num_heads_k
+    )
 
 
 def flash_mla_with_kvcache(

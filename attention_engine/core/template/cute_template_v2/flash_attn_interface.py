@@ -3,7 +3,6 @@
 from typing import Optional, Union
 
 import torch
-import torch.nn as nn
 
 # isort: off
 # We need to import the CUDA kernels after importing torch
@@ -23,7 +22,6 @@ import warnings
 import platform
 import sysconfig
 import tarfile
-import itertools
 
 import urllib.request
 import urllib.error
@@ -33,9 +31,7 @@ from torch.utils.cpp_extension import CUDA_HOME
 
 os.environ["TORCH_CUDA_ARCH_LIST"] = "9.0a"
 
-include_path = [
-
-]
+include_path = []
 
 # ninja build does not work unless include_dirs are abs path
 this_dir = os.path.dirname(os.path.abspath(__file__))
@@ -52,24 +48,34 @@ SKIP_CUDA_BUILD = os.getenv("FLASH_ATTENTION_SKIP_CUDA_BUILD", "FALSE") == "TRUE
 FORCE_CXX11_ABI = os.getenv("FLASH_ATTENTION_FORCE_CXX11_ABI", "FALSE") == "TRUE"
 
 DISABLE_BACKWARD = os.getenv("FLASH_ATTENTION_DISABLE_BACKWARD", "FALSE") == "TRUE"
-DISABLE_SPLIT = True # os.getenv("FLASH_ATTENTION_DISABLE_SPLIT", "FALSE") == "TRUE"
-DISABLE_PAGEDKV = True # os.getenv("FLASH_ATTENTION_DISABLE_PAGEDKV", "FALSE") == "TRUE"
-DISABLE_APPENDKV = True # os.getenv("FLASH_ATTENTION_DISABLE_APPENDKV", "FALSE") == "TRUE"
-DISABLE_LOCAL = True # os.getenv("FLASH_ATTENTION_DISABLE_LOCAL", "FALSE") == "TRUE"
-DISABLE_SOFTCAP = True # os.getenv("FLASH_ATTENTION_DISABLE_SOFTCAP", "FALSE") == "TRUE"
-DISABLE_PACKGQA = True # os.getenv("FLASH_ATTENTION_DISABLE_PACKGQA", "FALSE") == "TRUE"
+DISABLE_SPLIT = True  # os.getenv("FLASH_ATTENTION_DISABLE_SPLIT", "FALSE") == "TRUE"
+DISABLE_PAGEDKV = (
+    True  # os.getenv("FLASH_ATTENTION_DISABLE_PAGEDKV", "FALSE") == "TRUE"
+)
+DISABLE_APPENDKV = (
+    True  # os.getenv("FLASH_ATTENTION_DISABLE_APPENDKV", "FALSE") == "TRUE"
+)
+DISABLE_LOCAL = True  # os.getenv("FLASH_ATTENTION_DISABLE_LOCAL", "FALSE") == "TRUE"
+DISABLE_SOFTCAP = (
+    True  # os.getenv("FLASH_ATTENTION_DISABLE_SOFTCAP", "FALSE") == "TRUE"
+)
+DISABLE_PACKGQA = (
+    True  # os.getenv("FLASH_ATTENTION_DISABLE_PACKGQA", "FALSE") == "TRUE"
+)
 DISABLE_FP16 = os.getenv("FLASH_ATTENTION_DISABLE_FP16", "FALSE") == "TRUE"
-DISABLE_FP8 = True # os.getenv("FLASH_ATTENTION_DISABLE_FP8", "FALSE") == "TRUE"
-DISABLE_VARLEN = True # os.getenv("FLASH_ATTENTION_DISABLE_VARLEN", "FALSE") == "TRUE"
+DISABLE_FP8 = True  # os.getenv("FLASH_ATTENTION_DISABLE_FP8", "FALSE") == "TRUE"
+DISABLE_VARLEN = True  # os.getenv("FLASH_ATTENTION_DISABLE_VARLEN", "FALSE") == "TRUE"
 DISABLE_CLUSTER = os.getenv("FLASH_ATTENTION_DISABLE_CLUSTER", "FALSE") == "TRUE"
 DISABLE_HDIM64 = os.getenv("FLASH_ATTENTION_DISABLE_HDIM64", "FALSE") == "TRUE"
 DISABLE_HDIM96 = os.getenv("FLASH_ATTENTION_DISABLE_HDIM96", "FALSE") == "TRUE"
 DISABLE_HDIM128 = os.getenv("FLASH_ATTENTION_DISABLE_HDIM128", "FALSE") == "TRUE"
 DISABLE_HDIM192 = os.getenv("FLASH_ATTENTION_DISABLE_HDIM192", "FALSE") == "TRUE"
 DISABLE_HDIM256 = os.getenv("FLASH_ATTENTION_DISABLE_HDIM256", "FALSE") == "TRUE"
-DISABLE_SM8x = True # os.getenv("FLASH_ATTENTION_DISABLE_SM80", "FALSE") == "TRUE"
+DISABLE_SM8x = True  # os.getenv("FLASH_ATTENTION_DISABLE_SM80", "FALSE") == "TRUE"
 
-ENABLE_VCOLMAJOR = False # os.getenv("FLASH_ATTENTION_ENABLE_VCOLMAJOR", "FALSE") == "TRUE"
+ENABLE_VCOLMAJOR = (
+    False  # os.getenv("FLASH_ATTENTION_ENABLE_VCOLMAJOR", "FALSE") == "TRUE"
+)
 
 
 # HACK: we monkey patch pytorch's _write_ninja_file to pass
@@ -87,19 +93,21 @@ from torch.utils.cpp_extension import (
     _maybe_write,
 )
 
-def _write_ninja_file(path,
-                      cflags,
-                      post_cflags,
-                      cuda_cflags,
-                      cuda_post_cflags,
-                      cuda_dlink_post_cflags,
-                      sources,
-                      objects,
-                      ldflags,
-                      library_target,
-                      with_cuda,
-                      **kwargs,  # kwargs (ignored) to absorb new flags in torch.utils.cpp_extension
-                      ) -> None:
+
+def _write_ninja_file(
+    path,
+    cflags,
+    post_cflags,
+    cuda_cflags,
+    cuda_post_cflags,
+    cuda_dlink_post_cflags,
+    sources,
+    objects,
+    ldflags,
+    library_target,
+    with_cuda,
+    **kwargs,  # kwargs (ignored) to absorb new flags in torch.utils.cpp_extension
+) -> None:
     r"""Write a ninja file that does the desired compiling and linking.
 
     `path`: Where to write this file
@@ -114,6 +122,7 @@ def _write_ninja_file(path,
                       we do no linking.
     `with_cuda`: If we should be compiling with CUDA.
     """
+
     def sanitize_flags(flags):
         if flags is None:
             return []
@@ -134,116 +143,147 @@ def _write_ninja_file(path,
     compiler = get_cxx_compiler()
 
     # Version 1.3 is required for the `deps` directive.
-    config = ['ninja_required_version = 1.3']
-    config.append(f'cxx = {compiler}')
+    config = ["ninja_required_version = 1.3"]
+    config.append(f"cxx = {compiler}")
     if with_cuda or cuda_dlink_post_cflags:
         if IS_HIP_EXTENSION:
-            nvcc = _join_rocm_home('bin', 'hipcc')
+            nvcc = _join_rocm_home("bin", "hipcc")
         else:
-            nvcc = _join_cuda_home('bin', 'nvcc')
+            nvcc = _join_cuda_home("bin", "nvcc")
         if "PYTORCH_NVCC" in os.environ:
-            nvcc_from_env = os.getenv("PYTORCH_NVCC")    # user can set nvcc compiler with ccache using the environment variable here
+            nvcc_from_env = os.getenv(
+                "PYTORCH_NVCC"
+            )  # user can set nvcc compiler with ccache using the environment variable here
         else:
             nvcc_from_env = nvcc
-        config.append(f'nvcc_from_env = {nvcc_from_env}')
-        config.append(f'nvcc = {nvcc}')
+        config.append(f"nvcc_from_env = {nvcc_from_env}")
+        config.append(f"nvcc = {nvcc}")
 
     if IS_HIP_EXTENSION:
         post_cflags = COMMON_HIP_FLAGS + post_cflags
-    flags = [f'cflags = {" ".join(cflags)}']
-    flags.append(f'post_cflags = {" ".join(post_cflags)}')
+    flags = [f"cflags = {' '.join(cflags)}"]
+    flags.append(f"post_cflags = {' '.join(post_cflags)}")
     if with_cuda:
-        flags.append(f'cuda_cflags = {" ".join(cuda_cflags)}')
-        flags.append(f'cuda_post_cflags = {" ".join(cuda_post_cflags)}')
-        cuda_post_cflags_sm80 = [s if s != 'arch=compute_90a,code=sm_90a' else 'arch=compute_80,code=sm_80' for s in cuda_post_cflags]
-        flags.append(f'cuda_post_cflags_sm80 = {" ".join(cuda_post_cflags_sm80)}')
-        cuda_post_cflags_sm80_sm90 = cuda_post_cflags + ['-gencode', 'arch=compute_80,code=sm_80']
-        flags.append(f'cuda_post_cflags_sm80_sm90 = {" ".join(cuda_post_cflags_sm80_sm90)}')
-    flags.append(f'cuda_dlink_post_cflags = {" ".join(cuda_dlink_post_cflags)}')
-    flags.append(f'ldflags = {" ".join(ldflags)}')
+        flags.append(f"cuda_cflags = {' '.join(cuda_cflags)}")
+        flags.append(f"cuda_post_cflags = {' '.join(cuda_post_cflags)}")
+        cuda_post_cflags_sm80 = [
+            s if s != "arch=compute_90a,code=sm_90a" else "arch=compute_80,code=sm_80"
+            for s in cuda_post_cflags
+        ]
+        flags.append(f"cuda_post_cflags_sm80 = {' '.join(cuda_post_cflags_sm80)}")
+        cuda_post_cflags_sm80_sm90 = cuda_post_cflags + [
+            "-gencode",
+            "arch=compute_80,code=sm_80",
+        ]
+        flags.append(
+            f"cuda_post_cflags_sm80_sm90 = {' '.join(cuda_post_cflags_sm80_sm90)}"
+        )
+    flags.append(f"cuda_dlink_post_cflags = {' '.join(cuda_dlink_post_cflags)}")
+    flags.append(f"ldflags = {' '.join(ldflags)}")
 
     # Turn into absolute paths so we can emit them into the ninja build
     # file wherever it is.
     sources = [os.path.abspath(file) for file in sources]
 
     # See https://ninja-build.org/build.ninja.html for reference.
-    compile_rule = ['rule compile']
+    compile_rule = ["rule compile"]
     if IS_WINDOWS:
         compile_rule.append(
-            '  command = cl /showIncludes $cflags -c $in /Fo$out $post_cflags')
-        compile_rule.append('  deps = msvc')
+            "  command = cl /showIncludes $cflags -c $in /Fo$out $post_cflags"
+        )
+        compile_rule.append("  deps = msvc")
     else:
         compile_rule.append(
-            '  command = $cxx -MMD -MF $out.d $cflags -c $in -o $out $post_cflags')
-        compile_rule.append('  depfile = $out.d')
-        compile_rule.append('  deps = gcc')
+            "  command = $cxx -MMD -MF $out.d $cflags -c $in -o $out $post_cflags"
+        )
+        compile_rule.append("  depfile = $out.d")
+        compile_rule.append("  deps = gcc")
 
     if with_cuda:
-        cuda_compile_rule = ['rule cuda_compile']
-        nvcc_gendeps = ''
+        cuda_compile_rule = ["rule cuda_compile"]
+        nvcc_gendeps = ""
         # --generate-dependencies-with-compile is not supported by ROCm
         # Nvcc flag `--generate-dependencies-with-compile` is not supported by sccache, which may increase build time.
-        if torch.version.cuda is not None and os.getenv('TORCH_EXTENSION_SKIP_NVCC_GEN_DEPENDENCIES', '0') != '1':
-            cuda_compile_rule.append('  depfile = $out.d')
-            cuda_compile_rule.append('  deps = gcc')
+        if (
+            torch.version.cuda is not None
+            and os.getenv("TORCH_EXTENSION_SKIP_NVCC_GEN_DEPENDENCIES", "0") != "1"
+        ):
+            cuda_compile_rule.append("  depfile = $out.d")
+            cuda_compile_rule.append("  deps = gcc")
             # Note: non-system deps with nvcc are only supported
             # on Linux so use --generate-dependencies-with-compile
             # to make this work on Windows too.
-            nvcc_gendeps = '--generate-dependencies-with-compile --dependency-output $out.d'
-        cuda_compile_rule_sm80 = ['rule cuda_compile_sm80'] + cuda_compile_rule[1:] + [
-            f'  command = $nvcc_from_env {nvcc_gendeps} $cuda_cflags -c $in -o $out $cuda_post_cflags_sm80'
-        ]
-        cuda_compile_rule_sm80_sm90 = ['rule cuda_compile_sm80_sm90'] + cuda_compile_rule[1:] + [
-            f'  command = $nvcc_from_env {nvcc_gendeps} $cuda_cflags -c $in -o $out $cuda_post_cflags_sm80_sm90'
-        ]
+            nvcc_gendeps = (
+                "--generate-dependencies-with-compile --dependency-output $out.d"
+            )
+        cuda_compile_rule_sm80 = (
+            ["rule cuda_compile_sm80"]
+            + cuda_compile_rule[1:]
+            + [
+                f"  command = $nvcc_from_env {nvcc_gendeps} $cuda_cflags -c $in -o $out $cuda_post_cflags_sm80"
+            ]
+        )
+        cuda_compile_rule_sm80_sm90 = (
+            ["rule cuda_compile_sm80_sm90"]
+            + cuda_compile_rule[1:]
+            + [
+                f"  command = $nvcc_from_env {nvcc_gendeps} $cuda_cflags -c $in -o $out $cuda_post_cflags_sm80_sm90"
+            ]
+        )
         cuda_compile_rule.append(
-            f'  command = $nvcc_from_env {nvcc_gendeps} $cuda_cflags -c $in -o $out $cuda_post_cflags')
+            f"  command = $nvcc_from_env {nvcc_gendeps} $cuda_cflags -c $in -o $out $cuda_post_cflags"
+        )
 
     # Emit one build rule per source to enable incremental build.
     build = []
     for source_file, object_file in zip(sources, objects):
         is_cuda_source = _is_cuda_file(source_file) and with_cuda
         if is_cuda_source:
-            if source_file.endswith('_sm90.cu'):
-                rule = 'cuda_compile'
-            elif source_file.endswith('_sm80.cu'):
-                rule = 'cuda_compile_sm80'
+            if source_file.endswith("_sm90.cu"):
+                rule = "cuda_compile"
+            elif source_file.endswith("_sm80.cu"):
+                rule = "cuda_compile_sm80"
             else:
-                rule = 'cuda_compile_sm80_sm90'
+                rule = "cuda_compile_sm80_sm90"
         else:
-            rule = 'compile'
+            rule = "compile"
         if IS_WINDOWS:
-            source_file = source_file.replace(':', '$:')
-            object_file = object_file.replace(':', '$:')
+            source_file = source_file.replace(":", "$:")
+            object_file = object_file.replace(":", "$:")
         source_file = source_file.replace(" ", "$ ")
         object_file = object_file.replace(" ", "$ ")
-        build.append(f'build {object_file}: {rule} {source_file}')
+        build.append(f"build {object_file}: {rule} {source_file}")
 
     if cuda_dlink_post_cflags:
-        devlink_out = os.path.join(os.path.dirname(objects[0]), 'dlink.o')
-        devlink_rule = ['rule cuda_devlink']
-        devlink_rule.append('  command = $nvcc $in -o $out $cuda_dlink_post_cflags')
-        devlink = [f'build {devlink_out}: cuda_devlink {" ".join(objects)}']
+        devlink_out = os.path.join(os.path.dirname(objects[0]), "dlink.o")
+        devlink_rule = ["rule cuda_devlink"]
+        devlink_rule.append("  command = $nvcc $in -o $out $cuda_dlink_post_cflags")
+        devlink = [f"build {devlink_out}: cuda_devlink {' '.join(objects)}"]
         objects += [devlink_out]
     else:
         devlink_rule, devlink = [], []
 
     if library_target is not None:
-        link_rule = ['rule link']
+        link_rule = ["rule link"]
         if IS_WINDOWS:
-            cl_paths = subprocess.check_output(['where',
-                                                'cl']).decode(*SUBPROCESS_DECODE_ARGS).split('\r\n')
+            cl_paths = (
+                subprocess.check_output(["where", "cl"])
+                .decode(*SUBPROCESS_DECODE_ARGS)
+                .split("\r\n")
+            )
             if len(cl_paths) >= 1:
-                cl_path = os.path.dirname(cl_paths[0]).replace(':', '$:')
+                cl_path = os.path.dirname(cl_paths[0]).replace(":", "$:")
             else:
                 raise RuntimeError("MSVC is required to load C++ extensions")
-            link_rule.append(f'  command = "{cl_path}/link.exe" $in /nologo $ldflags /out:$out')
+            link_rule.append(
+                f'  command = "{cl_path}/link.exe" $in /nologo $ldflags /out:$out'
+            )
         else:
-            link_rule.append('  command = $cxx $in $ldflags -o $out')
+            link_rule.append("  command = $cxx $in $ldflags -o $out")
 
-        link = [f'build {library_target}: link {" ".join(objects)}']
+        link = [f"build {library_target}: link {' '.join(objects)}"]
 
-        default = [f'default {library_target}']
+        default = [f"default {library_target}"]
     else:
         link_rule, link, default = [], [], []
 
@@ -280,7 +320,9 @@ def get_platform():
 
 
 def get_cuda_bare_metal_version(cuda_dir):
-    raw_output = subprocess.check_output([cuda_dir + "/bin/nvcc", "-V"], universal_newlines=True)
+    raw_output = subprocess.check_output(
+        [cuda_dir + "/bin/nvcc", "-V"], universal_newlines=True
+    )
     output = raw_output.split()
     release_idx = output.index("release") + 1
     bare_metal_version = parse(output[release_idx].split(",")[0])
@@ -326,16 +368,23 @@ def is_offline_build() -> bool:
 def get_flashattn_cache_path():
     user_home = os.getenv("FLASH_ATTENTION_HOME")
     if not user_home:
-        user_home = os.getenv("HOME") or os.getenv("USERPROFILE") or os.getenv("HOMEPATH") or None
+        user_home = (
+            os.getenv("HOME")
+            or os.getenv("USERPROFILE")
+            or os.getenv("HOMEPATH")
+            or None
+        )
     if not user_home:
         raise RuntimeError("Could not find user home directory")
     return os.path.join(user_home, ".flashattn")
 
 
 def open_url(url):
-    user_agent = 'Mozilla/5.0 (X11; Linux x86_64; rv:109.0) Gecko/20100101 Firefox/119.0'
+    user_agent = (
+        "Mozilla/5.0 (X11; Linux x86_64; rv:109.0) Gecko/20100101 Firefox/119.0"
+    )
     headers = {
-        'User-Agent': user_agent,
+        "User-Agent": user_agent,
     }
     request = urllib.request.Request(url, None, headers)
     # Set timeout to 300 seconds to prevent the request from hanging forever.
@@ -353,16 +402,20 @@ def download_and_copy(name, src_func, dst_path, version, url_func):
     supported = {"Linux": "linux", "Darwin": "linux"}
     url = url_func(supported[system], arch, version)
     src_path = src_func(supported[system], arch, version)
-    tmp_path = os.path.join(flashattn_cache_path, "nvidia", name)  # path to cache the download
-    dst_path = os.path.join(base_dir, os.pardir, "third_party", "nvidia", "backend", dst_path)  # final binary path
+    tmp_path = os.path.join(
+        flashattn_cache_path, "nvidia", name
+    )  # path to cache the download
+    dst_path = os.path.join(
+        base_dir, os.pardir, "third_party", "nvidia", "backend", dst_path
+    )  # final binary path
     src_path = os.path.join(tmp_path, src_path)
     download = not os.path.exists(src_path)
     if download:
-        print(f'downloading and extracting {url} ...')
+        print(f"downloading and extracting {url} ...")
         file = tarfile.open(fileobj=open_url(url), mode="r|*")
         file.extractall(path=tmp_path)
     os.makedirs(os.path.split(dst_path)[0], exist_ok=True)
-    print(f'copy {src_path} to {dst_path} ...')
+    print(f"copy {src_path} to {dst_path} ...")
     if os.path.isdir(src_path):
         shutil.copytree(src_path, dst_path, dirs_exist_ok=True)
     else:
@@ -404,30 +457,41 @@ if not SKIP_CUDA_BUILD:
     if bare_metal_version != Version("12.8"):
         download_and_copy(
             name="nvcc",
-            src_func=lambda system, arch, version: f"cuda_nvcc-{system}-{arch}-{version}-archive/bin",
+            src_func=lambda system, arch, version: (
+                f"cuda_nvcc-{system}-{arch}-{version}-archive/bin"
+            ),
             dst_path="bin",
             version=NVIDIA_TOOLCHAIN_VERSION["nvcc"],
-            url_func=lambda system, arch, version:
-            f"https://developer.download.nvidia.com/compute/cuda/redist/cuda_nvcc/{system}-{arch}/cuda_nvcc-{system}-{arch}-{version}-archive.tar.xz",
+            url_func=lambda system, arch, version: (
+                f"https://developer.download.nvidia.com/compute/cuda/redist/cuda_nvcc/{system}-{arch}/cuda_nvcc-{system}-{arch}-{version}-archive.tar.xz"
+            ),
         )
         download_and_copy(
             name="ptxas",
-            src_func=lambda system, arch, version: f"cuda_nvcc-{system}-{arch}-{version}-archive/bin/ptxas",
+            src_func=lambda system, arch, version: (
+                f"cuda_nvcc-{system}-{arch}-{version}-archive/bin/ptxas"
+            ),
             dst_path="bin",
             version=NVIDIA_TOOLCHAIN_VERSION["ptxas"],
-            url_func=lambda system, arch, version:
-            f"https://developer.download.nvidia.com/compute/cuda/redist/cuda_nvcc/{system}-{arch}/cuda_nvcc-{system}-{arch}-{version}-archive.tar.xz",
+            url_func=lambda system, arch, version: (
+                f"https://developer.download.nvidia.com/compute/cuda/redist/cuda_nvcc/{system}-{arch}/cuda_nvcc-{system}-{arch}-{version}-archive.tar.xz"
+            ),
         )
         download_and_copy(
             name="ptxas",
-            src_func=lambda system, arch, version: f"cuda_nvcc-{system}-{arch}-{version}-archive/nvvm/bin",
+            src_func=lambda system, arch, version: (
+                f"cuda_nvcc-{system}-{arch}-{version}-archive/nvvm/bin"
+            ),
             dst_path="nvvm/bin",
             version=NVIDIA_TOOLCHAIN_VERSION["ptxas"],
-            url_func=lambda system, arch, version:
-            f"https://developer.download.nvidia.com/compute/cuda/redist/cuda_nvcc/{system}-{arch}/cuda_nvcc-{system}-{arch}-{version}-archive.tar.xz",
+            url_func=lambda system, arch, version: (
+                f"https://developer.download.nvidia.com/compute/cuda/redist/cuda_nvcc/{system}-{arch}/cuda_nvcc-{system}-{arch}-{version}-archive.tar.xz"
+            ),
         )
         base_dir = os.path.dirname(__file__)
-        ctk_path_new = os.path.abspath(os.path.join(base_dir, os.pardir, "third_party", "nvidia", "backend", "bin"))
+        ctk_path_new = os.path.abspath(
+            os.path.join(base_dir, os.pardir, "third_party", "nvidia", "backend", "bin")
+        )
         nvcc_path_new = os.path.join(ctk_path_new, f"nvcc{exe_extension}")
         # Need to append to path otherwise nvcc can't find cicc in nvvm/bin/cicc
         # nvcc 12.8 seems to hard-code looking for cicc in ../nvvm/bin/cicc
@@ -445,7 +509,9 @@ if not SKIP_CUDA_BUILD:
     # https://github.com/pytorch/pytorch/blob/8472c24e3b5b60150096486616d98b7bea01500b/torch/utils/cpp_extension.py#L920
     if FORCE_CXX11_ABI:
         torch._C._GLIBCXX_USE_CXX11_ABI = True
-    repo_dir = Path(os.path.join(os.path.dirname(os.path.abspath(__file__)), "../../../../"))
+    repo_dir = Path(
+        os.path.join(os.path.dirname(os.path.abspath(__file__)), "../../../../")
+    )
     cutlass_dir = repo_dir / "3rd_parties" / "cutlass_dc4817"
 
     feature_args = (
@@ -543,13 +609,16 @@ if not SKIP_CUDA_BUILD:
         str(Path(this_dir)),
         str(cutlass_dir / "include"),
     ]
-    
+
     flash_attn_3_cuda = torch.utils.cpp_extension.load(
-        name="flash_attn_3_hopper_cuda"+"{{dimqk}}_{{dimv}}_{{cutlass_dtype}}".replace("::", "_").replace(" ", "_"),
+        name="flash_attn_3_hopper_cuda"
+        + "{{dimqk}}_{{dimv}}_{{cutlass_dtype}}".replace("::", "_").replace(" ", "_"),
         sources=sources,
         extra_cflags=[
-            "-O3", "-std=c++17",
-        ] + feature_args,
+            "-O3",
+            "-std=c++17",
+        ]
+        + feature_args,
         extra_cuda_cflags=nvcc_threads_args() + nvcc_flags + cc_flag + feature_args,
         extra_include_paths=include_dirs,
         with_cuda=True,
@@ -564,39 +633,40 @@ def maybe_contiguous(x):
 
 
 def _flash_attn_forward(
-        q,
-        k,
-        v,
-        k_new,
-        v_new,
-        qv,
-        out,
-        cu_seqlens_q,
-        cu_seqlens_k,
-        cu_seqlens_k_new,
-        seqused_q,
-        seqused_k,
-        max_seqlen_q,
-        max_seqlen_k,
-        page_table,
-        kv_batch_idx,
-        leftpad_k,
-        rotary_cos,
-        rotary_sin,
-        seqlens_rotary,
-        q_descale,
-        k_descale,
-        v_descale,
-        softmax_scale,
-        causal,
-        window_size=(-1, -1),
-        attention_chunk=0,
-        softcap=0.0,
-        rotary_interleaved=True,
-        scheduler_metadata=None,
-        num_splits=1,
-        pack_gqa=None,
-        sm_margin=0):
+    q,
+    k,
+    v,
+    k_new,
+    v_new,
+    qv,
+    out,
+    cu_seqlens_q,
+    cu_seqlens_k,
+    cu_seqlens_k_new,
+    seqused_q,
+    seqused_k,
+    max_seqlen_q,
+    max_seqlen_k,
+    page_table,
+    kv_batch_idx,
+    leftpad_k,
+    rotary_cos,
+    rotary_sin,
+    seqlens_rotary,
+    q_descale,
+    k_descale,
+    v_descale,
+    softmax_scale,
+    causal,
+    window_size=(-1, -1),
+    attention_chunk=0,
+    softcap=0.0,
+    rotary_interleaved=True,
+    scheduler_metadata=None,
+    num_splits=1,
+    pack_gqa=None,
+    sm_margin=0,
+):
     q, k, k_new, v_new = [maybe_contiguous(x) for x in (q, k, k_new, v_new)]
     v = v.contiguous() if v.stride(-1) != 1 and v.stride(-3) != 1 else v
     cu_seqlens_q, cu_seqlens_k, cu_seqlens_k_new = [
@@ -648,27 +718,27 @@ def _flash_attn_forward(
 
 
 def _flash_attn_backward(
-        dout,
-        q,
-        k,
-        v,
-        out,
-        softmax_lse,
-        cu_seqlens_q,
-        cu_seqlens_k,
-        sequed_q,
-        sequed_k,
-        max_seqlen_q,
-        max_seqlen_k,
-        dq,
-        dk,
-        dv,
-        softmax_scale,
-        causal,
-        window_size=(-1, -1),
-        softcap=0.0,
-        deterministic=False,
-        sm_margin=0,
+    dout,
+    q,
+    k,
+    v,
+    out,
+    softmax_lse,
+    cu_seqlens_q,
+    cu_seqlens_k,
+    sequed_q,
+    sequed_k,
+    max_seqlen_q,
+    max_seqlen_k,
+    dq,
+    dk,
+    dv,
+    softmax_scale,
+    causal,
+    window_size=(-1, -1),
+    softcap=0.0,
+    deterministic=False,
+    sm_margin=0,
 ):
     # dq, dk, dv are allocated by us so they should already be contiguous
     dout, q, k, v, out = [maybe_contiguous(x) for x in (dout, q, k, v, out)]
@@ -706,7 +776,9 @@ class FlashAttnQKVPackedFunc(torch.autograd.Function):
         qkv,
         softmax_scale,
         causal,
-        q_descale=None, k_descale=None, v_descale=None,
+        q_descale=None,
+        k_descale=None,
+        v_descale=None,
         window_size=(-1, -1),
         attention_chunk=0,
         softcap=0.0,
@@ -729,15 +801,26 @@ class FlashAttnQKVPackedFunc(torch.autograd.Function):
             q,
             k,
             v,
-            None, None,  # k_new, v_new
+            None,
+            None,  # k_new, v_new
             None,  # qv
             None,  # out
-            None, None, None,   # cu_seqlens_q/k/k_new
-            None, None,   # seqused_q/k
-            None, None,   # max_seqlen_q/k
-            None, None, None,   # page_table, kv_batch_idx, leftpad_k,
-            None, None, None,  # rotary_cos/sin, seqlens_rotary
-            q_descale, k_descale, v_descale,
+            None,
+            None,
+            None,  # cu_seqlens_q/k/k_new
+            None,
+            None,  # seqused_q/k
+            None,
+            None,  # max_seqlen_q/k
+            None,
+            None,
+            None,  # page_table, kv_batch_idx, leftpad_k,
+            None,
+            None,
+            None,  # rotary_cos/sin, seqlens_rotary
+            q_descale,
+            k_descale,
+            v_descale,
             softmax_scale,
             causal=causal,
             window_size=window_size,
@@ -779,9 +862,12 @@ class FlashAttnQKVPackedFunc(torch.autograd.Function):
             v,
             out,
             softmax_lse,
-            None, None, # cu_seqlens_q, cu_seqlens_k,
-            None, None, # sequed_q, sequed_k,
-            None, None, # max_seqlen_q, max_seqlen_k,
+            None,
+            None,  # cu_seqlens_q, cu_seqlens_k,
+            None,
+            None,  # sequed_q, sequed_k,
+            None,
+            None,  # max_seqlen_q, max_seqlen_k,
             dq,
             dk,
             dv,
@@ -797,7 +883,6 @@ class FlashAttnQKVPackedFunc(torch.autograd.Function):
 
 
 class FlashAttnFunc(torch.autograd.Function):
-
     @staticmethod
     def forward(
         ctx,
@@ -807,7 +892,9 @@ class FlashAttnFunc(torch.autograd.Function):
         softmax_scale,
         causal,
         qv=None,
-        q_descale=None, k_descale=None, v_descale=None,
+        q_descale=None,
+        k_descale=None,
+        v_descale=None,
         window_size=(-1, -1),
         attention_chunk=0,
         softcap=0.0,
@@ -817,21 +904,34 @@ class FlashAttnFunc(torch.autograd.Function):
         sm_margin=0,
     ):
         if softmax_scale is None:
-            softmax_scale = (q.shape[-1] + (qv.shape[-1] if qv is not None else 0)) ** (-0.5)
+            softmax_scale = (q.shape[-1] + (qv.shape[-1] if qv is not None else 0)) ** (
+                -0.5
+            )
         # out, q, k, v, out_padded, softmax_lse = _flash_attn_forward(
         out, softmax_lse, *rest = _flash_attn_forward(
             q,
             k,
             v,
-            None, None,  # k_new, v_new
+            None,
+            None,  # k_new, v_new
             qv,  # qv
             None,  # out
-            None, None, None,   # cu_seqlens_q/k/k_new
-            None, None,   # seqused_q/k
-            None, None,   # max_seqlen_q/k
-            None, None, None,   # page_table, kv_batch_idx, leftpad_k,
-            None, None, None,  # rotary_cos/sin, seqlens_rotary
-            q_descale, k_descale, v_descale,
+            None,
+            None,
+            None,  # cu_seqlens_q/k/k_new
+            None,
+            None,  # seqused_q/k
+            None,
+            None,  # max_seqlen_q/k
+            None,
+            None,
+            None,  # page_table, kv_batch_idx, leftpad_k,
+            None,
+            None,
+            None,  # rotary_cos/sin, seqlens_rotary
+            q_descale,
+            k_descale,
+            v_descale,
             softmax_scale,
             causal=causal,
             window_size=window_size,
@@ -850,7 +950,7 @@ class FlashAttnFunc(torch.autograd.Function):
         ctx.softcap = softcap
         ctx.deterministic = deterministic
         ctx.sm_margin = sm_margin
-        return out# , softmax_lse
+        return out  # , softmax_lse
 
     @staticmethod
     def backward(ctx, dout, *args):
@@ -864,9 +964,12 @@ class FlashAttnFunc(torch.autograd.Function):
             v,
             out,
             softmax_lse,
-            None, None, # cu_seqlens_q, cu_seqlens_k,
-            None, None, # sequed_q, sequed_k,
-            None, None, # max_seqlen_q, max_seqlen_k,
+            None,
+            None,  # cu_seqlens_q, cu_seqlens_k,
+            None,
+            None,  # sequed_q, sequed_k,
+            None,
+            None,  # max_seqlen_q, max_seqlen_k,
             dq,
             dk,
             dv,
@@ -880,11 +983,28 @@ class FlashAttnFunc(torch.autograd.Function):
         dq = dq[..., : q.shape[-1]]  # We could have padded the head dimension
         dk = dk[..., : k.shape[-1]]
         dv = dv[..., : v.shape[-1]]
-        return dq, dk, dv, None, None, None, None, None, None, None, None, None, None, None, None, None, None
+        return (
+            dq,
+            dk,
+            dv,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+        )
 
 
 class FlashAttnVarlenFunc(torch.autograd.Function):
-
     @staticmethod
     def forward(
         ctx,
@@ -900,7 +1020,9 @@ class FlashAttnVarlenFunc(torch.autograd.Function):
         softmax_scale,
         causal,
         qv=None,
-        q_descale=None, k_descale=None, v_descale=None,
+        q_descale=None,
+        k_descale=None,
+        v_descale=None,
         window_size=(-1, -1),
         attention_chunk=0,
         softcap=0.0,
@@ -910,25 +1032,34 @@ class FlashAttnVarlenFunc(torch.autograd.Function):
         sm_margin=0,
     ):
         if softmax_scale is None:
-            softmax_scale = (q.shape[-1] + (qv.shape[-1] if qv is not None else 0)) ** (-0.5)
+            softmax_scale = (q.shape[-1] + (qv.shape[-1] if qv is not None else 0)) ** (
+                -0.5
+            )
         # out, q, k, v, out_padded, softmax_lse = _flash_attn_varlen_forward(
         out, softmax_lse, *rest = _flash_attn_forward(
             q,
             k,
             v,
-            None, None,  # k_new, v_new
+            None,
+            None,  # k_new, v_new
             qv,  # qv
             None,  # out
             cu_seqlens_q,
             cu_seqlens_k,
-            None,   # cu_seqlens_k_new
+            None,  # cu_seqlens_k_new
             seqused_q,
             seqused_k,
             max_seqlen_q,
             max_seqlen_k,
-            None, None, None,   # page_table, kv_batch_idx, leftpad_k,
-            None, None, None,  # rotary_cos/sin, seqlens_rotary
-            q_descale, k_descale, v_descale,
+            None,
+            None,
+            None,  # page_table, kv_batch_idx, leftpad_k,
+            None,
+            None,
+            None,  # rotary_cos/sin, seqlens_rotary
+            q_descale,
+            k_descale,
+            v_descale,
             softmax_scale,
             causal=causal,
             window_size=window_size,
@@ -939,7 +1070,9 @@ class FlashAttnVarlenFunc(torch.autograd.Function):
             sm_margin=sm_margin,
         )
         # ctx.save_for_backward(q, k, v, out_padded, softmax_lse, cu_seqlens_q, cu_seqlens_k, seqused_q, seqused_k)
-        ctx.save_for_backward(q, k, v, out, softmax_lse, cu_seqlens_q, cu_seqlens_k, seqused_q, seqused_k)
+        ctx.save_for_backward(
+            q, k, v, out, softmax_lse, cu_seqlens_q, cu_seqlens_k, seqused_q, seqused_k
+        )
         ctx.max_seqlen_q = max_seqlen_q
         ctx.max_seqlen_k = max_seqlen_k
         ctx.softmax_scale = softmax_scale
@@ -953,7 +1086,9 @@ class FlashAttnVarlenFunc(torch.autograd.Function):
 
     @staticmethod
     def backward(ctx, dout, *args):
-        q, k, v, out, softmax_lse, cu_seqlens_q, cu_seqlens_k, seqused_q, seqused_k = ctx.saved_tensors
+        q, k, v, out, softmax_lse, cu_seqlens_q, cu_seqlens_k, seqused_q, seqused_k = (
+            ctx.saved_tensors
+        )
         assert ctx.attention_chunk == 0, "FA3 backward does not support attention_chunk"
         dq, dk, dv = torch.empty_like(q), torch.empty_like(k), torch.empty_like(v)
         _flash_attn_backward(
@@ -982,14 +1117,40 @@ class FlashAttnVarlenFunc(torch.autograd.Function):
         dq = dq[..., : q.shape[-1]]  # We could have padded the head dimension
         dk = dk[..., : k.shape[-1]]
         dv = dv[..., : v.shape[-1]]
-        return dq, dk, dv, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None
+        return (
+            dq,
+            dk,
+            dv,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+        )
 
 
 def flash_attn_qkvpacked_func(
     qkv,
     softmax_scale=None,
     causal=False,
-    q_descale=None, k_descale=None, v_descale=None,
+    q_descale=None,
+    k_descale=None,
+    v_descale=None,
     window_size=(-1, -1),
     attention_chunk=0,
     softcap=0.0,
@@ -1035,7 +1196,9 @@ def flash_attn_qkvpacked_func(
         qkv,
         softmax_scale,
         causal,
-        q_descale, k_descale, v_descale,
+        q_descale,
+        k_descale,
+        v_descale,
         window_size,
         attention_chunk,
         softcap,
@@ -1052,7 +1215,9 @@ def flash_attn_func(
     softmax_scale=None,
     causal=False,
     qv=None,
-    q_descale=None, k_descale=None, v_descale=None,
+    q_descale=None,
+    k_descale=None,
+    v_descale=None,
     window_size=(-1, -1),
     attention_chunk=0,
     softcap=0.0,
@@ -1113,7 +1278,9 @@ def flash_attn_func(
         softmax_scale,
         causal,
         qv,
-        q_descale, k_descale, v_descale,
+        q_descale,
+        k_descale,
+        v_descale,
         window_size,
         attention_chunk,
         softcap,
@@ -1137,7 +1304,9 @@ def flash_attn_varlen_func(
     softmax_scale=None,
     causal=False,
     qv=None,
-    q_descale=None, k_descale=None, v_descale=None,
+    q_descale=None,
+    k_descale=None,
+    v_descale=None,
     window_size=(-1, -1),
     attention_chunk=0,
     softcap=0.0,
@@ -1159,7 +1328,9 @@ def flash_attn_varlen_func(
         softmax_scale,
         causal,
         qv,
-        q_descale, k_descale, v_descale,
+        q_descale,
+        k_descale,
+        v_descale,
         window_size,
         attention_chunk,
         softcap,
@@ -1198,12 +1369,12 @@ def flash_attn_with_kvcache(
     causal=False,
     window_size=(-1, -1),  # -1 means infinite context window
     attention_chunk=0,
-    softcap=0.0, # 0.0 means deactivated
+    softcap=0.0,  # 0.0 means deactivated
     rotary_interleaved=True,
     scheduler_metadata=None,
-    num_splits=0,    # Can be tuned for speed
-    pack_gqa=None,   # Can be tuned for speed
-    sm_margin=0,     # Can be tuned if some SMs are used for communication
+    num_splits=0,  # Can be tuned for speed
+    pack_gqa=None,  # Can be tuned for speed
+    sm_margin=0,  # Can be tuned if some SMs are used for communication
     return_softmax_lse=False,
 ):
     """
@@ -1294,7 +1465,9 @@ def flash_attn_with_kvcache(
     assert k_cache.stride(-1) == 1, "k_cache must have contiguous last dimension"
     assert v_cache.stride(-1) == 1, "v_cache must have contiguous last dimension"
     if softmax_scale is None:
-        softmax_scale = (q.shape[-1] + (qv.shape[-1] if qv is not None else 0)) ** (-0.5)
+        softmax_scale = (q.shape[-1] + (qv.shape[-1] if qv is not None else 0)) ** (
+            -0.5
+        )
     if cache_seqlens is not None and isinstance(cache_seqlens, int):
         cache_seqlens = torch.full(
             (k_cache.shape[0],), cache_seqlens, dtype=torch.int32, device=k_cache.device
@@ -1321,7 +1494,9 @@ def flash_attn_with_kvcache(
         rotary_cos,
         rotary_sin,
         rotary_seqlens,
-        q_descale, k_descale, v_descale,
+        q_descale,
+        k_descale,
+        v_descale,
         softmax_scale,
         causal=causal,
         window_size=window_size,
@@ -1338,7 +1513,12 @@ def flash_attn_with_kvcache(
 
 
 def get_scheduler_metadata(
-    batch_size, max_seqlen_q, max_seqlen_k, num_heads_q, num_heads_kv, headdim,
+    batch_size,
+    max_seqlen_q,
+    max_seqlen_k,
+    num_heads_q,
+    num_heads_kv,
+    headdim,
     cache_seqlens: torch.Tensor,
     qkv_dtype=torch.bfloat16,
     headdim_v=None,
@@ -1351,15 +1531,21 @@ def get_scheduler_metadata(
     window_size=(-1, -1),  # -1 means infinite context window
     attention_chunk=0,
     has_softcap=False,
-    num_splits=0,    # Can be tuned for speed
-    pack_gqa=None,   # Can be tuned for speed
-    sm_margin=0,     # Can be tuned if some SMs are used for communication
+    num_splits=0,  # Can be tuned for speed
+    pack_gqa=None,  # Can be tuned for speed
+    sm_margin=0,  # Can be tuned if some SMs are used for communication
 ):
     cache_seqlens = maybe_contiguous(cache_seqlens)
     if headdim_v is None:
         headdim_v = headdim
     scheduler_metadata = flash_attn_3_cuda.get_scheduler_metadata(
-        batch_size, max_seqlen_q, max_seqlen_k, num_heads_q, num_heads_kv, headdim, headdim_v,
+        batch_size,
+        max_seqlen_q,
+        max_seqlen_k,
+        num_heads_q,
+        num_heads_kv,
+        headdim,
+        headdim_v,
         qkv_dtype,
         cache_seqlens,
         cu_seqlens_q,
@@ -1370,7 +1556,8 @@ def get_scheduler_metadata(
         page_size,
         max_seqlen_k_new,
         causal,
-        window_size[0], window_size[1],
+        window_size[0],
+        window_size[1],
         attention_chunk,
         has_softcap,
         num_splits,

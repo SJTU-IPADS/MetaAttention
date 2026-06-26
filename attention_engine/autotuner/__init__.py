@@ -1,1 +1,1 @@
-from .decider import decider
+from .decider import decider as decider

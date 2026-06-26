@@ -1,16 +1,13 @@
 import torch
 from core.transform.core import CustomIO, SymbolicArray, SymbolScalar, Var
 
-from autotuner.decider import decider
 from autotuner.arch import H100
 
 import importlib.util
-import tempfile
 import os
 import os.path as osp
 import hashlib
 from functools import partial
-from typing import Optional, Callable, Union
 
 
 class OnlineFunc:
@@ -27,8 +24,12 @@ class OnlineFunc:
     backward: backward algorithm
     """
 
-    def __init__(self, online_rowscales: dict[str, SymbolScalar], final_rowscales: dict[str, SymbolScalar],
-                 external_fwd_tensors: CustomIO):  # , external_bwd_tensors:CustomIO):
+    def __init__(
+        self,
+        online_rowscales: dict[str, SymbolScalar],
+        final_rowscales: dict[str, SymbolScalar],
+        external_fwd_tensors: CustomIO,
+    ):  # , external_bwd_tensors:CustomIO):
         # TODO: external_tensors
         """
         define&init online_rowscales and final_rowscales
@@ -42,7 +43,8 @@ class OnlineFunc:
         self.external_fwd_tensors = external_fwd_tensors
         # self.external_bwd_tensors = external_bwd_tensors
         self.doosum_rowscales = SymbolicArray(
-            "doosum", Var("doosum"), shape_idx=["block_M"])
+            "doosum", Var("doosum"), shape_idx=["block_M"]
+        )
 
     @staticmethod
     def online_fwd(scores: SymbolicArray, online_rowscales, b, h, q_idx):
@@ -72,8 +74,7 @@ class OnlineFunc:
         return o, final_rowscales
 
     @staticmethod
-    def forward(
-            scores, final_rowscales: dict[str, SymbolScalar], b, h, q_idx, kv_idx):
+    def forward(scores, final_rowscales: dict[str, SymbolScalar], b, h, q_idx, kv_idx):
         """
         compute scores : scores = g(scores, scale),
             final_rowscales is saved during online forward
@@ -83,7 +84,8 @@ class OnlineFunc:
 
     @staticmethod
     def backward(
-            dp, scores, final_rowscales: dict[str, SymbolScalar], b, h, q_idx, kv_idx):
+        dp, scores, final_rowscales: dict[str, SymbolScalar], b, h, q_idx, kv_idx
+    ):
         """
         compute bwd scores: dscores = g_bwd(dp, scores)
         only support elementwise
@@ -92,7 +94,9 @@ class OnlineFunc:
         return dscores
 
     @staticmethod
-    def combine(final_rowscales, ):
+    def combine(
+        final_rowscales,
+    ):
         """combine kernel logic for split-k
 
         Args:
@@ -106,18 +110,31 @@ class OnlineFunc:
 
 
 class AttentionEngine:
-    def __init__(self, qkv_meta, custom_fwd_inputs, score_mod, mask_mod,
-                 online_func, mask_value="-inf", device=H100(), backend="tl", 
-                 tune=False, tune_file="", 
-                 tune_bwd=False, tune_file_bwd="",
-                 infer_mask=True, infer_mask_block_M=128, infer_mask_block_N=128, 
-                 extern_block_mask=False,
-                 use_varlen=False, # TODO
-                 kv_shared=False):
+    def __init__(
+        self,
+        qkv_meta,
+        custom_fwd_inputs,
+        score_mod,
+        mask_mod,
+        online_func,
+        mask_value="-inf",
+        device=H100(),
+        backend="tl",
+        tune=False,
+        tune_file="",
+        tune_bwd=False,
+        tune_file_bwd="",
+        infer_mask=True,
+        infer_mask_block_M=128,
+        infer_mask_block_N=128,
+        extern_block_mask=False,
+        use_varlen=False,  # TODO
+        kv_shared=False,
+    ):
         self.use_varlen = use_varlen
         # tunner
         # need_engine_fuse, fuse_config = decider(qkv_meta, device)
-        
+
         # if dynamic shape
         # TODO: 111
 
@@ -129,68 +146,75 @@ class AttentionEngine:
                 score_mod,
                 mask_mod,
                 online_func,
-                mask_value, infer_mask=infer_mask, infer_mask_block_M=infer_mask_block_M, infer_mask_block_N=infer_mask_block_N, 
-                extern_block_mask=extern_block_mask, 
+                mask_value,
+                infer_mask=infer_mask,
+                infer_mask_block_M=infer_mask_block_M,
+                infer_mask_block_N=infer_mask_block_N,
+                extern_block_mask=extern_block_mask,
                 tune=tune,
                 tune_file=tune_file,
                 tune_bwd=tune_bwd,
                 tune_file_bwd=tune_file_bwd,
-                kv_shared=kv_shared)
+                kv_shared=kv_shared,
+            )
 
         elif backend == "cute" or backend == "cute_v2":
             # TODO: implement lock for multiprocess
             from core.lower.lower_cute import lower_cute
+
             # must be same with cute_template.py
             OUTPUT_DIR = osp.join(
-                osp.dirname(
-                    osp.abspath(__file__)),
-                f"../core/template/{backend}_template_output")
+                osp.dirname(osp.abspath(__file__)),
+                f"../core/template/{backend}_template_output",
+            )
             if not kv_shared:
                 if backend == "cute_v2":
                     template_dir = osp.join(
-                        osp.dirname(
-                            osp.abspath(__file__)),
-                        "../core/template/cute_template_v2")
+                        osp.dirname(osp.abspath(__file__)),
+                        "../core/template/cute_template_v2",
+                    )
                 else:
                     template_dir = osp.join(
-                        osp.dirname(
-                            osp.abspath(__file__)),
-                        "../core/template/cute_template")
+                        osp.dirname(osp.abspath(__file__)),
+                        "../core/template/cute_template",
+                    )
                 file_path = os.path.join(OUTPUT_DIR, "flash_attn_interface.py")
             else:
                 template_dir = osp.join(
-                    osp.dirname(
-                        osp.abspath(__file__)),
-                    "../core/template/cute_template_kvshared")
+                    osp.dirname(osp.abspath(__file__)),
+                    "../core/template/cute_template_kvshared",
+                )
                 dimqk = qkv_meta[0].shape[3]
                 dimv = qkv_meta[2].shape[3]
                 OUTPUT_DIR = osp.join(
-                    osp.dirname(
-                        osp.abspath(__file__)),
-                    f"../core/template/cute_template_output_{dimqk}_{dimv}")
+                    osp.dirname(osp.abspath(__file__)),
+                    f"../core/template/cute_template_output_{dimqk}_{dimv}",
+                )
                 file_path = os.path.join(OUTPUT_DIR, "flash_mla_interface.py")
             cutlass_dtype_map = {
                 torch.float16: "cutlass::half_t",
                 torch.bfloat16: "cutlass::bfloat16_t",
             }
-            lower_cute(score_mod,
-                       mask_mod,
-                       online_func,
-                       custom_fwd_inputs,
-                       qkv_meta[0].shape[3],
-                       qkv_meta[2].shape[3],
-                       cutlass_dtype_map[qkv_meta[0].dtype],
-                       template_dir=template_dir,
-                       output_dir=OUTPUT_DIR,)
-            spec = importlib.util.spec_from_file_location(
-                "cute_attn", file_path)
+            lower_cute(
+                score_mod,
+                mask_mod,
+                online_func,
+                custom_fwd_inputs,
+                qkv_meta[0].shape[3],
+                qkv_meta[2].shape[3],
+                cutlass_dtype_map[qkv_meta[0].dtype],
+                template_dir=template_dir,
+                output_dir=OUTPUT_DIR,
+            )
+            spec = importlib.util.spec_from_file_location("cute_attn", file_path)
             cute_attn = importlib.util.module_from_spec(spec)
             spec.loader.exec_module(cute_attn)
             if not kv_shared:
                 # TODO: causal
                 self.attention = partial(
                     cute_attn.flash_attn_func,
-                    causal=True if mask_mod is not None else False)
+                    causal=True if mask_mod is not None else False,
+                )
                 self.block_mask = None
             else:
                 b = qkv_meta[0].shape[0]
@@ -199,7 +223,9 @@ class AttentionEngine:
                 h_kv = qkv_meta[2].shape[1]
                 seqlen_k = qkv_meta[2].shape[2]
                 head_dim_v = qkv_meta[2].shape[3]
-                cache_seqlens = torch.full((b,), seqlen_k, dtype=torch.int32, device="cuda")
+                cache_seqlens = torch.full(
+                    (b,), seqlen_k, dtype=torch.int32, device="cuda"
+                )
                 tile_scheduler_metadata, num_split = cute_attn.get_mla_metadata(
                     cache_seqlens,
                     s_q * h_q // h_kv,
@@ -208,8 +234,7 @@ class AttentionEngine:
                 # print("num_split", num_split)
                 # print("tile_scheduler_metadata", tile_scheduler_metadata)
                 max_seqlen = cache_seqlens.max().item()
-                max_seqlen_pad = ((max_seqlen+255) // 256) * 256
-                block_size = 64
+                max_seqlen_pad = ((max_seqlen + 255) // 256) * 256
                 block_table = torch.arange(
                     b * max_seqlen_pad // 64, dtype=torch.int32, device="cuda"
                 ).view(b, max_seqlen_pad // 64)
@@ -220,17 +245,29 @@ class AttentionEngine:
                     head_dim_v=head_dim_v,
                     tile_scheduler_metadata=tile_scheduler_metadata,
                     num_splits=num_split,
-                    causal=True if mask_mod is not None else False)
+                    causal=True if mask_mod is not None else False,
+                )
                 self.block_mask = None
-                
 
-    def _select_lower_template(self, qkv_meta, custom_fwd_inputs, score_mod, mask_mod,
-                    online_func, mask_value="-inf", tuned_config=None, 
-                    infer_mask=False, infer_mask_block_M=128, infer_mask_block_N=128,
-                    extern_block_mask=False,
-                    tune=False, tune_file="",
-                    tune_bwd=False, tune_file_bwd="",
-                    kv_shared=False):
+    def _select_lower_template(
+        self,
+        qkv_meta,
+        custom_fwd_inputs,
+        score_mod,
+        mask_mod,
+        online_func,
+        mask_value="-inf",
+        tuned_config=None,
+        infer_mask=False,
+        infer_mask_block_M=128,
+        infer_mask_block_N=128,
+        extern_block_mask=False,
+        tune=False,
+        tune_file="",
+        tune_bwd=False,
+        tune_file_bwd="",
+        kv_shared=False,
+    ):
         tl_dtype_map = {
             torch.float16: "float16",
             torch.bfloat16: "bfloat16",
@@ -239,124 +276,148 @@ class AttentionEngine:
         kv_len = qkv_meta[2].shape[2]
         head = qkv_meta[0].shape[1]
         head_kv = qkv_meta[2].shape[1]
-        
+
         # mla decode
         if kv_shared:
             from core.lower.lower_decode_mla import lower_tl as lower_tl_decode_mla
-            tl_code = lower_tl_decode_mla(score_mod,
-                                        mask_mod,
-                                        online_func,
-                                        custom_fwd_inputs,
-                                        qkv_meta[0].shape[0], # B
-                                        head, # headq
-                                        head_kv, # H
-                                        kv_len, # S
-                                        qkv_meta[0].shape[3],
-                                        qkv_meta[2].shape[3],
-                                        tl_dtype_map[qkv_meta[0].dtype],
-                                        mask_value,
-                                        tuned_config)
+
+            tl_code = lower_tl_decode_mla(
+                score_mod,
+                mask_mod,
+                online_func,
+                custom_fwd_inputs,
+                qkv_meta[0].shape[0],  # B
+                head,  # headq
+                head_kv,  # H
+                kv_len,  # S
+                qkv_meta[0].shape[3],
+                qkv_meta[2].shape[3],
+                tl_dtype_map[qkv_meta[0].dtype],
+                mask_value,
+                tuned_config,
+            )
             return tl_code, None
-        
+
         # decode gqa
-        if q_seqlen != kv_len and head > head_kv: # TODO: change condition
-            assert (q_seqlen < kv_len)
+        if q_seqlen != kv_len and head > head_kv:  # TODO: change condition
+            assert q_seqlen < kv_len
             assert q_seqlen == 1
             infer_mask = True
             from core.lower.lower_decode_gqa import lower_tl as lower_tl_decode_gqa
-            tl_code, block_mask = lower_tl_decode_gqa(score_mod,
-                                      mask_mod,
-                                      online_func,
-                                      custom_fwd_inputs,
-                                      qkv_meta[0].shape[0], # B
-                                      head, # headq
-                                        head_kv, # H
-                                        kv_len, # S
-                                      qkv_meta[0].shape[3],
-                                      qkv_meta[2].shape[3],
-                                      tl_dtype_map[qkv_meta[0].dtype],
-                                      mask_value,
-                                      tuned_config,
-                                      extern_block_mask,
-                                      infer_mask_block_N=infer_mask_block_N)
+
+            tl_code, block_mask = lower_tl_decode_gqa(
+                score_mod,
+                mask_mod,
+                online_func,
+                custom_fwd_inputs,
+                qkv_meta[0].shape[0],  # B
+                head,  # headq
+                head_kv,  # H
+                kv_len,  # S
+                qkv_meta[0].shape[3],
+                qkv_meta[2].shape[3],
+                tl_dtype_map[qkv_meta[0].dtype],
+                mask_value,
+                tuned_config,
+                extern_block_mask,
+                infer_mask_block_N=infer_mask_block_N,
+            )
             return tl_code, block_mask
-            
+
         # decode mha
         if q_seqlen != kv_len and head == head_kv:
-            assert (q_seqlen < kv_len)
+            assert q_seqlen < kv_len
             from core.lower.lower_decode import lower_tl as lower_tl_decode
-            tl_code = lower_tl_decode(score_mod,
-                                      mask_mod,
-                                      online_func,
-                                      custom_fwd_inputs,
-                                      qkv_meta[0].shape[0], # B
-                                        head, # headq
-                                        q_seqlen, # S
-                                        kv_len, # S
-                                      qkv_meta[0].shape[3],
-                                      qkv_meta[2].shape[3],
-                                      tl_dtype_map[qkv_meta[0].dtype],
-                                      mask_value,
-                                      tuned_config)
+
+            tl_code = lower_tl_decode(
+                score_mod,
+                mask_mod,
+                online_func,
+                custom_fwd_inputs,
+                qkv_meta[0].shape[0],  # B
+                head,  # headq
+                q_seqlen,  # S
+                kv_len,  # S
+                qkv_meta[0].shape[3],
+                qkv_meta[2].shape[3],
+                tl_dtype_map[qkv_meta[0].dtype],
+                mask_value,
+                tuned_config,
+            )
             return tl_code, None
-        
+
         # train/prefill mha forward & backward
         if q_seqlen == kv_len and head == head_kv:
             from core.lower.lower import lower_tl
-            tl_code, block_mask = lower_tl(score_mod,
-                                mask_mod,
-                                online_func,
-                                custom_fwd_inputs,
-                                qkv_meta[0].shape[0], # B
-                                qkv_meta[0].shape[1], # H
-                                q_seqlen, # S
-                                qkv_meta[0].shape[3],
-                                qkv_meta[2].shape[3],
-                                tl_dtype_map[qkv_meta[0].dtype],
-                                mask_value,
-                                tuned_config, 
-                                infer_mask, 
-                                infer_mask_block_M=infer_mask_block_M, 
-                                infer_mask_block_N=infer_mask_block_N,
-                                extern_block_mask=extern_block_mask,
-                                tune=tune, tune_file=tune_file,
-                                tune_bwd=tune_bwd, tune_file_bwd=tune_file_bwd)
+
+            tl_code, block_mask = lower_tl(
+                score_mod,
+                mask_mod,
+                online_func,
+                custom_fwd_inputs,
+                qkv_meta[0].shape[0],  # B
+                qkv_meta[0].shape[1],  # H
+                q_seqlen,  # S
+                qkv_meta[0].shape[3],
+                qkv_meta[2].shape[3],
+                tl_dtype_map[qkv_meta[0].dtype],
+                mask_value,
+                tuned_config,
+                infer_mask,
+                infer_mask_block_M=infer_mask_block_M,
+                infer_mask_block_N=infer_mask_block_N,
+                extern_block_mask=extern_block_mask,
+                tune=tune,
+                tune_file=tune_file,
+                tune_bwd=tune_bwd,
+                tune_file_bwd=tune_file_bwd,
+            )
             return tl_code, block_mask
-        
+
         # gqa forward & backward
         if q_seqlen == kv_len and head > head_kv:
             from core.lower.lower_gqa import lower_tl
-            tl_code, block_mask = lower_tl(score_mod,
-                                mask_mod,
-                                online_func,
-                                custom_fwd_inputs,
-                                qkv_meta[0].shape[0], # B
-                                qkv_meta[0].shape[1], # H
-                                q_seqlen, # S
-                                qkv_meta[0].shape[3],
-                                qkv_meta[2].shape[3],
-                                tl_dtype_map[qkv_meta[0].dtype],
-                                mask_value,
-                                tuned_config, infer_mask, 
-                                tune=tune, tune_file=tune_file,
-                                tune_bwd=tune_bwd, tune_file_bwd=tune_file_bwd)
+
+            tl_code, block_mask = lower_tl(
+                score_mod,
+                mask_mod,
+                online_func,
+                custom_fwd_inputs,
+                qkv_meta[0].shape[0],  # B
+                qkv_meta[0].shape[1],  # H
+                q_seqlen,  # S
+                qkv_meta[0].shape[3],
+                qkv_meta[2].shape[3],
+                tl_dtype_map[qkv_meta[0].dtype],
+                mask_value,
+                tuned_config,
+                infer_mask,
+                tune=tune,
+                tune_file=tune_file,
+                tune_bwd=tune_bwd,
+                tune_file_bwd=tune_file_bwd,
+            )
             return tl_code, block_mask
-        
-    def _compile_tl(self, qkv_meta, custom_fwd_inputs, score_mod, mask_mod,
-                    online_func, mask_value="-inf", tuned_config=None, 
-                    infer_mask=False, infer_mask_block_M=128, infer_mask_block_N=128,
-                    extern_block_mask=False,
-                    tune=False, tune_file="",
-                    tune_bwd=False, tune_file_bwd="",
-                    kv_shared=False):
-        tl_dtype_map = {
-            torch.float16: "float16",
-            torch.bfloat16: "bfloat16",
-        }
-        q_seqlen = qkv_meta[0].shape[2]
-        kv_len = qkv_meta[2].shape[2]
-        head = qkv_meta[0].shape[1]
-        head_kv = qkv_meta[2].shape[1]
+
+    def _compile_tl(
+        self,
+        qkv_meta,
+        custom_fwd_inputs,
+        score_mod,
+        mask_mod,
+        online_func,
+        mask_value="-inf",
+        tuned_config=None,
+        infer_mask=False,
+        infer_mask_block_M=128,
+        infer_mask_block_N=128,
+        extern_block_mask=False,
+        tune=False,
+        tune_file="",
+        tune_bwd=False,
+        tune_file_bwd="",
+        kv_shared=False,
+    ):
         block_mask = None
         tl_code, block_mask = self._select_lower_template(
             qkv_meta,
@@ -364,8 +425,11 @@ class AttentionEngine:
             score_mod,
             mask_mod,
             online_func,
-            mask_value, tuned_config=tuned_config, 
-            infer_mask=infer_mask, infer_mask_block_M=infer_mask_block_M, infer_mask_block_N=infer_mask_block_N,
+            mask_value,
+            tuned_config=tuned_config,
+            infer_mask=infer_mask,
+            infer_mask_block_M=infer_mask_block_M,
+            infer_mask_block_N=infer_mask_block_N,
             extern_block_mask=extern_block_mask,
             tune=tune,
             tune_file=tune_file,
@@ -373,7 +437,7 @@ class AttentionEngine:
             tune_file_bwd=tune_file_bwd,
             kv_shared=kv_shared,
         )
-        self.tl_code = tl_code  
+        self.tl_code = tl_code
         # for debug
         # with open("generated_tl.py","w") as f:
         #      f.write(tl_code)
@@ -403,7 +467,6 @@ class AttentionEngine:
             args = args + (self.block_mask,)
         if self.use_varlen:
             args = args + (kargs.get("cache_seqlens"),)
-        
+
         o = self.attention(*args)
         return o
-
