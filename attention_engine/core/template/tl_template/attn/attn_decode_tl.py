@@ -229,7 +229,7 @@ tuned_config = {
 }
 program = kernel(
     {{BATCH}}, {{HEADS}}, {{SEQ_LEN}}, {{SEQ_LEN_KV}}, {{DIM}}, {{DIMV}},
-    4, **tuned_config
+    1, **tuned_config
 )
 mod = tl.compile(
     program,
@@ -252,7 +252,7 @@ class _attention(torch.autograd.Function):
 
         global mod
 
-        num_split = 4
+        num_split = 1
         output_idx_list = {{output_idx_list}}
         O_partial = torch.empty(BATCH, N_CTXQ, H, num_split, D_HEADV, dtype=q.dtype, device=q.device)
         {{torch_alloc_final_rowscales | indent(8)}}
