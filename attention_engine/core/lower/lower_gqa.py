@@ -2,7 +2,7 @@
 import logging
 import os.path as osp
 from dataclasses import dataclass, field
-from typing import Dict
+from typing import Dict, List
 
 import sympy as sp
 import torch.fx as fx
