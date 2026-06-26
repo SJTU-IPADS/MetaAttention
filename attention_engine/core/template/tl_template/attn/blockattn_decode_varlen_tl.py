@@ -282,7 +282,7 @@ class SparseFlashAttn(torch.nn.Module):
             num_split=T.symbolic("num_split"),
             num_stages=2,
             threads=128,
-            max_cache_seqlen=T.symbolic("max_cache_seqlen"),
+            max_cache_seqlen={{SEQ_LEN_KV}},  # T.symbolic("max_cache_seqlen"), # Tilelang0.1.5 bug
             num_blocks=T.symbolic("num_blocks"),
         )
 
