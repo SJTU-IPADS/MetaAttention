@@ -29,7 +29,7 @@ def make_dq_layout(dQ):
     )
 
 # TL_KERNEL = """
-def kernel(batch, heads, seq_len, seq_len_kv, dim, dimv, 
+def kernel(batch, heads, seq_len, seq_len_kv, dim, dimv,
            num_split=4,
         block_M = None, block_N = None, num_stages = None, thread_num = None,
         shared_fuse = None):
@@ -41,9 +41,9 @@ def kernel(batch, heads, seq_len, seq_len_kv, dim, dimv,
     part_shape_o = [batch, seq_len, heads, num_split, dimv]
     dtype = "{{tl_dtype}}" # "float16"
     accum_dtype = "float"
-    
+
     block_M2 = 128
-    
+
     # TODO: mask
     is_casual = {{is_inf_mask}} # True
     # shared_fuse = True
@@ -51,11 +51,11 @@ def kernel(batch, heads, seq_len, seq_len_kv, dim, dimv,
 
     @T.macro
     {{score_mod_func_def | indent(4)}}
-    
+
     @T.macro
     {{online_func_def | indent(8)}}
 
-        
+
     @T.macro
     def main_split(
         Q: T.Buffer(shape, dtype), # type: ignore
@@ -80,7 +80,7 @@ def kernel(batch, heads, seq_len, seq_len_kv, dim, dimv,
             # acc_o = T.alloc_fragment([block_M, dimv], accum_dtype)
 
             {{custom_fwd_inputs_init | indent(12)}}
-            
+
             mid = bx
             hid = by % heads
             bid = by // heads
@@ -112,14 +112,14 @@ def kernel(batch, heads, seq_len, seq_len_kv, dim, dimv,
 
                 # TODO: naive solution: if reduce_max, -T.inf; if reduce_sum, 0
                 T.clear(scores)
-                
+
                 T.gemm(Q_shared, K_shared, scores, transpose_B=True, policy= (T.GemmWarpPolicy.FullRow if (not shared_fuse) else T.GemmWarpPolicy.FullCol))
                 T.copy(V[bid, (seq_len_kv // num_split) * sid + k * block_N : (seq_len_kv // num_split) * sid + (k + 1) * block_N, hid, :], V_shared)
-                    
+
                 {{custom_fwd_inputs_load_s2r | indent(16)}}
                 # call score_mod
                 {{call_score_mod | indent(16)}}
-                    
+
                 # call online_func
                 if shared_fuse:
                     T.copy(scores, scores_shared)
@@ -133,7 +133,7 @@ def kernel(batch, heads, seq_len, seq_len_kv, dim, dimv,
 
                 for i, j in T.Parallel(block_M, dimv):
                     acc_o[i, j] *= {{o_scale_varname}}[i]
-                
+
                 # update online_rowscales
                 {{online_rowscales_update | indent(16)}}
 
@@ -141,7 +141,7 @@ def kernel(batch, heads, seq_len, seq_len_kv, dim, dimv,
                     T.gemm(acc_s_cast_1, V_shared, acc_o, policy=(T.GemmWarpPolicy.FullCol))
                 else:
                     T.gemm(acc_s_cast, V_shared, acc_o, policy=T.GemmWarpPolicy.FullRow)
-            
+
             # online_fwd_epilogue
             {{online_func_epilogue | indent(12)}}
 
@@ -150,7 +150,7 @@ def kernel(batch, heads, seq_len, seq_len_kv, dim, dimv,
 
             # save final_rowscale
             {{final_rowscales_save | indent(12)}}
-        
+
     @T.macro
     def combine(
         # g_lse
@@ -170,7 +170,7 @@ def kernel(batch, heads, seq_len, seq_len_kv, dim, dimv,
             # lse_max_local = T.alloc_fragment([block_M], accum_dtype)
             # scale_o_local = T.alloc_fragment([num_split, block_M], accum_dtype)
             {{combinekernel_input_init | indent(12)}}
-            
+
             T.annotate_layout(
                 {
                     o_accum_local: T.Fragment(o_accum_local.shape, forward_thread_fn=lambda i, j: i),
@@ -182,7 +182,7 @@ def kernel(batch, heads, seq_len, seq_len_kv, dim, dimv,
             T.clear(o_accum_local)
             # T.copy(g_lse[bz, by, :, bx * block_M : (bx + 1) * block_M,], lse_local)
             {{combinekernel_input_load | indent(12)}}
-            
+
             # T.reduce_max(lse_local, lse_max_local, dim=0, clear=False)
             # for i,j in T.Parallel(num_split, block_M):
             #     row_sum_local[i, j] = T.exp2(lse_local[i, j] - lse_max_local[j])
@@ -192,8 +192,8 @@ def kernel(batch, heads, seq_len, seq_len_kv, dim, dimv,
             # for i, j in T.Parallel(num_split, block_M):
             #     scale_o_local[i, j] = T.exp2(lse_local[i, j] - lse_logsum_local[j])
             {{combinekernel_combine | indent(12)}}
-            
-            for k in range(num_split):
+
+            for k in T.Pipelined(num_split, num_stages=2):
                 T.copy(Output_partial[bz, bx * block_M2:(bx + 1) * block_M2, by, k, :], po_shared)
                 T.copy(po_shared, po_local)
                 for i, j in T.Parallel(block_M2, dimv):
@@ -226,7 +226,7 @@ tuned_config = {
     'num_stages': {{stages}} if attn_device.platform == "CUDA" else 0,
     'thread_num': {{thread_num}},
     'shared_fuse': {{shared_fuse}}
-}    
+}
 program = kernel(
     {{BATCH}}, {{HEADS}}, {{SEQ_LEN}}, {{SEQ_LEN_KV}}, {{DIM}}, {{DIMV}},
     4, **tuned_config
@@ -249,14 +249,14 @@ class _attention(torch.autograd.Function):
         if N_CTXQ < {{block_M}}:
             q = F.pad(q, (0, 0, 0 , 0, 0, {{block_M}} - N_CTXQ))
             N_CTXQ = {{block_M}}
-            
+
         global mod
-        
+
         num_split = 4
         output_idx_list = {{output_idx_list}}
         O_partial = torch.empty(BATCH, N_CTXQ, H, num_split, D_HEADV, dtype=q.dtype, device=q.device)
         {{torch_alloc_final_rowscales | indent(8)}}
-        
+
         if len(output_idx_list) == 1:
             o = mod(q, k, v, *custom_fwd_inputs, {{final_rowscales_list}} O_partial)
             final_scale = []
@@ -266,11 +266,9 @@ class _attention(torch.autograd.Function):
         if N_CTXQOLD < {{block_M}}:
             o = o[:, :N_CTXQOLD, :, :]
         return o
-    
+
     @staticmethod
     def backward(ctx, do):
         pass
 
 attention = _attention.apply
-
-
