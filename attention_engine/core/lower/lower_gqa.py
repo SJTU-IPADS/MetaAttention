@@ -1,25 +1,25 @@
 # from ..attn_engine import OnlineFunc
-from ..transform.core import (
-    SymbolScalar,
-    SymbolicArray,
-    is_causal_mask,
-    is_less_causal_mask,
-    create_block_mask,
-)
-from ..transform.graph import Var
-from ..utils import IndentedCode
+import logging
+import os.path as osp
+from dataclasses import dataclass, field
+from typing import Dict
+
+import sympy as sp
+import torch.fx as fx
+
+from ..codegen.common import *
 from ..codegen.tl_gen import generate_tl_from_dag
 from ..template.attn_template import TlAttnTemplate
 from ..template.blockattn_template import TlBlockAttnTemplate
-from dataclasses import dataclass, field
-
-from ..codegen.common import *
-import sympy as sp
-
-import logging
-
-import torch.fx as fx
-import os.path as osp
+from ..transform.core import (
+    SymbolicArray,
+    SymbolScalar,
+    create_block_mask,
+    is_causal_mask,
+    is_less_causal_mask,
+)
+from ..transform.graph import Var
+from ..utils import IndentedCode
 
 THIS_FILE_PATH = osp.dirname(osp.abspath(__file__))
 TEMPLATE_PATH = osp.join(THIS_FILE_PATH, "../template/tl_template/attn/attn_gqa_tl.py")
@@ -950,6 +950,7 @@ def lower_tl(
             tlattn_template = TlBlockAttnTemplate
             output_idx_list = [i + 1 for i in output_idx_list]
         else:
+            block_mask = None
             tlattn_template = TlAttnTemplate
 
         return tlattn_template(

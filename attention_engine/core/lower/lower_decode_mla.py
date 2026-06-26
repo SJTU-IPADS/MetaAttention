@@ -19,6 +19,7 @@ class lowerOutput:
     KV_CTX: int = "0"
     DIM: int = "0"
     PE_DIM: int = "0"
+    TUNE: str = "False"
 
 
 def lower_tl(
@@ -44,6 +45,7 @@ def lower_tl(
         KV_CTX=str(seqlenkv),
         DIM=str(dimv),
         PE_DIM=str(dimqk - dimv),
+        TUNE="False",
     )
 
     return TlAttnTemplate(

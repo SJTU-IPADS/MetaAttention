@@ -12,6 +12,7 @@ from ..codegen.tl_gen import generate_tl_from_dag
 from ..template.attn_template import TlAttnTemplate
 from ..template.blockattn_template import TlBlockAttnTemplate
 from dataclasses import dataclass, field
+from typing import Dict, List
 
 from ..codegen.common import *
 import sympy as sp
