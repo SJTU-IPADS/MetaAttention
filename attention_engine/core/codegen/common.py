@@ -6,7 +6,7 @@ import torch
 import torch.fx as fx
 from sympy import Symbol
 
-from ..transform.core import IndentedCode
+from core.utils import IndentedCode
 
 
 def dtype_map(dtype: str) -> str:
