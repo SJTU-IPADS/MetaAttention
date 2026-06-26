@@ -1,13 +1,12 @@
-import torch
-from core.transform.core import CustomIO, SymbolicArray, SymbolScalar, Var
-
-from autotuner.arch import H100
-
+import hashlib
 import importlib.util
 import os
 import os.path as osp
-import hashlib
 from functools import partial
+
+import torch
+from autotuner.arch import H100
+from core.transform.core import CustomIO, SymbolicArray, SymbolScalar, Var
 
 
 class OnlineFunc:
@@ -377,7 +376,6 @@ class AttentionEngine:
         # gqa forward & backward
         if q_seqlen == kv_len and head > head_kv:
             from core.lower.lower_gqa import lower_tl
-<<<<<<< HEAD
 
             tl_code, block_mask = lower_tl(
                 score_mod,
@@ -386,6 +384,7 @@ class AttentionEngine:
                 custom_fwd_inputs,
                 qkv_meta[0].shape[0],  # B
                 qkv_meta[0].shape[1],  # H
+                head_kv,
                 q_seqlen,  # S
                 qkv_meta[0].shape[3],
                 qkv_meta[2].shape[3],
@@ -398,23 +397,6 @@ class AttentionEngine:
                 tune_bwd=tune_bwd,
                 tune_file_bwd=tune_file_bwd,
             )
-=======
-            tl_code, block_mask = lower_tl(score_mod,
-                                mask_mod,
-                                online_func,
-                                custom_fwd_inputs,
-                                qkv_meta[0].shape[0], # B
-                                qkv_meta[0].shape[1], # H
-                                head_kv,
-                                q_seqlen, # S
-                                qkv_meta[0].shape[3],
-                                qkv_meta[2].shape[3],
-                                tl_dtype_map[qkv_meta[0].dtype],
-                                mask_value,
-                                tuned_config, infer_mask,
-                                tune=tune, tune_file=tune_file,
-                                tune_bwd=tune_bwd, tune_file_bwd=tune_file_bwd)
->>>>>>> 8219be7 (feat(lower_gqa): add kv_heads in metadata)
             return tl_code, block_mask
 
     def _compile_tl(

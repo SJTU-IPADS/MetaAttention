@@ -560,7 +560,6 @@ def _retnet_recurrent_ref(query, key, value):
 def _mamba2_ref(value, delta_t, a_param, key, query, chunk_size=64):
     def chunk_state_ref(b_tensor, x_tensor, dt_tensor, d_a_cumsum):
         batch, seqlen, nheads, headdim = x_tensor.shape
-        dstate = b_tensor.shape[-1]
         _, _, nchunks, local_chunk = dt_tensor.shape
         ngroups = b_tensor.shape[2]
         assert seqlen == nchunks * local_chunk
