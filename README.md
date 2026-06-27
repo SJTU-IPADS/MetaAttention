@@ -21,17 +21,20 @@ To run generated kernels, you still need a supported GPU runtime:
 
 ## Local Quickstart with `uv`
 
-Use this path if you already have a working Python, PyTorch, and GPU driver stack on the host machine.
+Use this path if you already have a working Python environment and a PyTorch build that matches your target runtime (CUDA, ROCm, or CPU) on the host machine.
 
-### NVIDIA / CUDA
+### Install
 
 ```bash
 uv venv --python 3.12
 . .venv/bin/activate
-uv pip install -e .
+# install a platform-appropriate PyTorch build first
+uv pip install torch
+# then install this project without re-resolving torch
+uv pip install --no-deps -e .
 ```
 
-This installs MetaAttention itself and resolves the pinned `torch` and `tilelang` dependencies from `pyproject.toml`.
+This installs MetaAttention itself from the local checkout. PyTorch is intentionally host-selected so CUDA, ROCm, and CPU environments can provide their own compatible build, and `--no-deps` avoids replacing that choice during editable install.
 
 ### Verify the installation
 ```bash
@@ -44,7 +47,7 @@ Expected output includes `AttentionEngine Succuessfully created.`
 Notes:
 
 - The example needs a working GPU runtime. On this workstation, the script fails before kernel generation if no NVIDIA driver is present.
-- The editable install was validated by importing `attn_engine`, `core`, `autotuner`, and `benchmark` after `uv pip install -e .`.
+- The editable install was validated by importing `attn_engine`, `core`, `autotuner`, and `benchmark` after `uv pip install --no-deps -e .`.
 
 ## Docker Quickstart
 

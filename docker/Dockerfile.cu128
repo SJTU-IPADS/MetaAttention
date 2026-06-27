@@ -6,8 +6,7 @@ WORKDIR /workspace
 
 # 1. Install uv and Python dependencies needed by MetaAttention and benchmarks
 RUN pip install uv
-RUN uv pip install --system "numpy<2" einops jinja2 matplotlib sympy termcolor triton==3.2.0 transformers==4.45.0 flash-linear-attention==0.2.0
-RUN USE_LLVM=True uv pip install --system "tilelang @ git+https://github.com/tile-ai/tilelang.git@v0.1.11"
+RUN uv pip install --system "numpy<2" einops jinja2 matplotlib sympy termcolor triton==3.2.0 transformers==4.45.0 flash-linear-attention==0.2.0 tilelang
 
 # 2. Install MetaAttention itself via uv without re-resolving the base runtime stack
 COPY . ${REPO_DIR}

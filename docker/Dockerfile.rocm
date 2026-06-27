@@ -5,8 +5,7 @@ ARG REPO_DIR
 WORKDIR /workspace
 
 RUN pip install uv
-RUN uv pip install --system "numpy<2.0" einops jinja2 matplotlib pandas sympy termcolor
-RUN USE_LLVM=True USE_ROCM=True uv pip install --system "tilelang @ git+https://github.com/tile-ai/tilelang.git@v0.1.11"
+RUN uv pip install --system "numpy<2.0" einops jinja2 matplotlib pandas sympy termcolor tilelang
 
 # Install MetaAttention itself via uv without re-resolving the ROCm base runtime stack
 COPY . ${REPO_DIR}
