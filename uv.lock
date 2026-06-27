@@ -1186,7 +1186,7 @@ requires-dist = [
     { name = "pytest", marker = "extra == 'test'" },
     { name = "sympy" },
     { name = "termcolor" },
-    { name = "tilelang", git = "https://github.com/tile-ai/tilelang.git?rev=41b95a5dfafea78f200b7253c6f7527c04ee522e" },
+    { name = "tilelang", git = "https://github.com/tile-ai/tilelang.git?tag=v0.1.11" },
     { name = "torch", index = "https://download.pytorch.org/whl/cu128" },
     { name = "transformers", marker = "extra == 'bench'", specifier = "==4.45.0" },
 ]
@@ -2332,8 +2332,8 @@ wheels = [
 
 [[package]]
 name = "tilelang"
-version = "0.1.11+cuda.git41b95a5d"
-source = { git = "https://github.com/tile-ai/tilelang.git?rev=41b95a5dfafea78f200b7253c6f7527c04ee522e#41b95a5dfafea78f200b7253c6f7527c04ee522e" }
+version = "0.1.11+cuda.gitcd37ed5f"
+source = { git = "https://github.com/tile-ai/tilelang.git?tag=v0.1.11#cd37ed5fc35ae7a60a1277c8eb49028174ac51e6" }
 dependencies = [
     { name = "apache-tvm-ffi" },
     { name = "cloudpickle" },

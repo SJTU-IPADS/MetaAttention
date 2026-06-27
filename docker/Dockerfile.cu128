@@ -4,13 +4,15 @@ FROM nvcr.io/nvidia/pytorch:25.02-py3
 ARG REPO_DIR
 WORKDIR /workspace
 
-# 1. Install Tilelang
-RUN git clone --recursive -b my https://github.com/tile-ai/tilelang.git \
-  && cd tilelang \
-  && USE_LLVM=True pip install -v -e .
+# 1. Install uv and Python dependencies needed by MetaAttention and benchmarks
+RUN pip install uv
+RUN uv pip install --system "numpy<2" einops jinja2 matplotlib sympy termcolor triton==3.2.0 transformers==4.45.0 flash-linear-attention==0.2.0
+RUN USE_LLVM=True uv pip install --system "tilelang @ git+https://github.com/tile-ai/tilelang.git@v0.1.11"
 
-# 2. Install Python dependencies needed by MetaAttention and benchmarks
-RUN pip install "numpy<2" einops jinja2 matplotlib sympy termcolor triton==3.2.0 transformers==4.45.0 flash-linear-attention==0.2.0
+# 2. Install MetaAttention itself via uv without re-resolving the base runtime stack
+COPY . ${REPO_DIR}
+WORKDIR ${REPO_DIR}
+RUN uv pip install --system --no-deps -e .
 
 # 3. Install ml-sigmoid-attention
 # Note: Using MAX_JOBS=X to speed up compilation
@@ -45,11 +47,5 @@ RUN git clone https://github.com/state-spaces/mamba.git \
   && cd mamba \
   && git checkout v2.2.6.post3 \
   && mv mamba_ssm/__init__.py mamba_ssm/__init__.py.bak
-
-
-COPY . ${REPO_DIR}
-WORKDIR ${REPO_DIR}
-RUN uv pip install --system --no-deps -e .
-
 
 CMD ["bash"]

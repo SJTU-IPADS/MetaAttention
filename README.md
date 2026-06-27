@@ -31,7 +31,7 @@ uv venv --python 3.12
 uv pip install -e .
 ```
 
-This installs MetaAttention itself and resolves the pinned `torch` and `tilelang` sources from `pyproject.toml`.
+This installs MetaAttention itself and resolves the pinned `torch` and `tilelang` dependencies from `pyproject.toml`.
 
 ### Verify the installation
 ```bash
