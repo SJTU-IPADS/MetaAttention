@@ -25,6 +25,18 @@ test = [
   "pytest",
 ]
 
+[tool.uv]
+default-groups = []
+
+[[tool.uv.index]]
+name = "pytorch-cu128"
+url = "https://download.pytorch.org/whl/cu128"
+explicit = true
+
+[tool.uv.sources]
+torch = [{ index = "pytorch-cu128" }]
+tilelang = { git = "https://github.com/tile-ai/tilelang.git", rev = "41b95a5dfafea78f200b7253c6f7527c04ee522e" }
+
 [dependency-groups]
 dev = [
   "prek>=0.4.5",
