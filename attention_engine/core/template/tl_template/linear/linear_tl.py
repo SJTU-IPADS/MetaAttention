@@ -145,11 +145,11 @@ def chunk_fwd_h(
 
         @T.prim_func
         def main(
-            k: T.Buffer((batch, headk, seqlen, dim), dtype), # type: ignore
-            v: T.Buffer((batch, head, seqlen, dimv), dtype), # type: ignore
-            g: T.Buffer((batch, head, seqlen), accum_dtype), # type: ignore
+            k: T.Tensor((batch, headk, seqlen, dim), dtype), # type: ignore
+            v: T.Tensor((batch, head, seqlen, dimv), dtype), # type: ignore
+            g: T.Tensor((batch, head, seqlen), accum_dtype), # type: ignore
             {{chunk_h_custom_inputs_list | indent(12)}}
-            h: T.Buffer((batch, head, NT*dim, dimv), dtype), # type: ignore
+            h: T.Tensor((batch, head, NT*dim, dimv), dtype), # type: ignore
         ):
             with T.Kernel(NK, NV, batch * head, threads=num_threads) as (bx, by, bz):
 
@@ -183,17 +183,17 @@ def chunk_fwd_h(
                     # T.copy(b_h, b_h_shared)
                     # T.copy(h[bb,bhead,(i_t*dim+bx*BK):(i_t*dim+(bx+1)*BK), by*BV:(by+1)*BV], b_h)
                     # T.copy(k[bb,bhead,i_t*BT:(i_t+1)*BT,bx*BK:(bx+1)*BK], b_k)
-                    T.copy(k[bb,bheadk,i_t*BT:(i_t+1)*BT,bx*BK:(bx+1)*BK], b_k_shared)
-                    T.copy(v[bb,bhead,i_t*BT:(i_t+1)*BT,by*BV:(by+1)*BV], b_v_shared)
-                    T.copy(g[bb,bhead,i_t*BT:(i_t+1)*BT], b_g_shared)
+                    T.copy(k[bb,bheadk,i_t*BT:(i_t+1)*BT,bx*BK:(bx+1)*BK], b_k_shared, disable_tma=True)
+                    T.copy(v[bb,bhead,i_t*BT:(i_t+1)*BT,by*BV:(by+1)*BV], b_v_shared, disable_tma=True)
+                    T.copy(g[bb,bhead,i_t*BT:(i_t+1)*BT], b_g_shared, disable_tma=True)
                     # T.copy(v[bb,bhead,i_t*BT:(i_t+1)*BT,by*BV:(by+1)*BV], b_v)
                     # T.copy(b_v, b_v_shared)
                     # T.copy(g[bb,bhead,i_t*BT:(i_t+1)*BT], b_g)
                     # T.copy(g[bb,bhead,(i_t+1)*BT-1:(i_t+1)*BT], b_glast)
                     b_glast[0] = g[bb,bhead,(i_t+1)*BT-1]
 
-                    T.copy(b_h, b_h_shared) # implicit cast
-                    T.copy(b_h_shared, h[bb,bhead,i_t*dim+bx*BK:(i_t)*dim+(bx+1)*BK,by*BV:(by+1)*BV])
+                    T.copy(b_h, b_h_shared, disable_tma=True) # implicit cast
+                    T.copy(b_h_shared, h[bb,bhead,i_t*dim+bx*BK:(i_t)*dim+(bx+1)*BK,by*BV:(by+1)*BV], disable_tma=True)
                     # T.copy(b_h, h[bb,bhead,i_t*dim+bx*BK:(i_t)*dim+(bx+1)*BK,by*BV:(by+1)*BV])
 
                     # scalar_decay
@@ -206,11 +206,11 @@ def chunk_fwd_h(
                     # for i0,i1 in T.Parallel(BT, BV):
                     #     b_v_shared[i0,i1] *= T.exp2((b_glast[0] - b_g[i0]) * 1.44269504)
 
-                    T.copy(b_k_shared, b_k)
+                    T.copy(b_k_shared, b_k, disable_tma=True)
                     
                     {{k_mod_expr_fused_h | indent(20)}}
                     
-                    T.copy(b_g_shared, b_g)
+                    T.copy(b_g_shared, b_g, disable_tma=True)
                     for i0, i1 in T.Parallel(BK, BT):
                         b_kt[i0, i1] = b_k[i1, i0]*T.exp2((b_glast[0] - b_g[i1]) * LOG2E)
 
@@ -320,13 +320,13 @@ def chunk_o(
         
         @T.prim_func
         def main(
-            h: T.Buffer((batch,head,NT*dim,dimv), dtype), # type: ignore
-            q: T.Buffer((batch,headq,seqlen,dim), dtype), # type: ignore
-            k: T.Buffer((batch,headk,seqlen,dim), dtype), # type: ignore
-            v: T.Buffer((batch,head,seqlen,dimv), dtype), # type: ignore
-            g: T.Buffer((batch,head,seqlen), accum_dtype), # type: ignore
+            h: T.Tensor((batch,head,NT*dim,dimv), dtype), # type: ignore
+            q: T.Tensor((batch,headq,seqlen,dim), dtype), # type: ignore
+            k: T.Tensor((batch,headk,seqlen,dim), dtype), # type: ignore
+            v: T.Tensor((batch,head,seqlen,dimv), dtype), # type: ignore
+            g: T.Tensor((batch,head,seqlen), accum_dtype), # type: ignore
             {{chunk_o_custom_inputs_list | indent(12)}}
-            o: T.Buffer((batch,head,seqlen,dimv), dtype), # type: ignore
+            o: T.Tensor((batch,head,seqlen,dimv), dtype), # type: ignore
             # custom fwd inputs
         ):
             with T.Kernel(NV, NT, batch * head, threads=num_threads) as (bx, by, bz):
@@ -359,13 +359,13 @@ def chunk_o(
                 T.clear(bs)
                 for ik in T.Pipelined(NK, num_stages=num_stages):
                     # pipeline here
-                    T.copy(q[bb, bhq, by*BT:(by+1)*BT, ik*BK:(ik+1)*BK], bq_shared)
+                    T.copy(q[bb, bhq, by*BT:(by+1)*BT, ik*BK:(ik+1)*BK], bq_shared, disable_tma=True)
                     # T.copy(q[bb, bh, by*BT:(by+1)*BT, ik*BK:(ik+1)*BK], bq)
-                    T.copy(k[bb, bhk, by*BT:(by+1)*BT, ik*BK:(ik+1)*BK], bk_shared)
+                    T.copy(k[bb, bhk, by*BT:(by+1)*BT, ik*BK:(ik+1)*BK], bk_shared, disable_tma=True)
 
-                    T.copy(h[bb, bh, by*dim+ik*BK:by*dim+(ik+1)*BK, bx*BV:(bx+1)*BV], b_state_shared)
+                    T.copy(h[bb, bh, by*dim+ik*BK:by*dim+(ik+1)*BK, bx*BV:(bx+1)*BV], b_state_shared, disable_tma=True)
                     
-                    T.copy(bq_shared, bq)
+                    T.copy(bq_shared, bq, disable_tma=True)
                     # q_mod here (fused)
                     {{q_mod_expr | indent(20)}}
 
@@ -374,9 +374,9 @@ def chunk_o(
                 
                 # T.copy(g[bb, bh, by*BT:(by+1)*BT], bg)
                 # T.copy(g[bb, bh, by*BT:(by+1)*BT], bg1)
-                T.copy(g[bb, bh, by*BT:(by+1)*BT], bg_shared)
-                T.copy(bg_shared, bg)
-                T.copy(bg_shared, bg1)
+                T.copy(g[bb, bh, by*BT:(by+1)*BT], bg_shared, disable_tma=True)
+                T.copy(bg_shared, bg, disable_tma=True)
+                T.copy(bg_shared, bg1, disable_tma=True)
                 for i0,i1 in T.Parallel(BT,BV):
                     bo[i0,i1] *= T.exp2(bg[i0] * LOG2E)
                 
@@ -391,12 +391,12 @@ def chunk_o(
                 # v_mod here (fused)
                 {{v_mod_expr_fused_o | indent(16)}}
                 
-                T.copy(v[bb, bh, by*BT:(by+1)*BT, bx*BV:(bx+1)*BV], bv_shared)
-                T.copy(bs, bs_cast)
+                T.copy(v[bb, bh, by*BT:(by+1)*BT, bx*BV:(bx+1)*BV], bv_shared, disable_tma=True)
+                T.copy(bs, bs_cast, disable_tma=True)
                 T.gemm(bs_cast, bv_shared, bo, policy=T.GemmWarpPolicy.FullRow)
                 # T.copy(bo, o[bb, bh, by*BT:(by+1)*BT, bx*BV:(bx+1)*BV]) # slow for stride between thread
-                T.copy(bo, bo_shared) # implicit type convert
-                T.copy(bo_shared, o[bb, bh, by*BT:(by+1)*BT, bx*BV:(bx+1)*BV])
+                T.copy(bo, bo_shared, disable_tma=True) # implicit type convert
+                T.copy(bo_shared, o[bb, bh, by*BT:(by+1)*BT, bx*BV:(bx+1)*BV], disable_tma=True)
         
         return main
     
@@ -479,14 +479,14 @@ def chunk_bwd_kernel_dh(
 
         @T.prim_func
         def main(
-            q: T.Buffer((batch, headq, seqlen, dim), dtype), # type: ignore
-            k: T.Buffer((batch, headk, seqlen, dim), dtype), # type: ignore
-            v: T.Buffer((batch, head, seqlen, dimv), dtype), # type: ignore
-            g: T.Buffer((batch, head, seqlen), accum_dtype), # type: ignore
+            q: T.Tensor((batch, headq, seqlen, dim), dtype), # type: ignore
+            k: T.Tensor((batch, headk, seqlen, dim), dtype), # type: ignore
+            v: T.Tensor((batch, head, seqlen, dimv), dtype), # type: ignore
+            g: T.Tensor((batch, head, seqlen), accum_dtype), # type: ignore
             # must not the same with preserved "do"
-            d_o: T.Buffer((batch, head, seqlen, dimv), dtype), # type: ignore
+            d_o: T.Tensor((batch, head, seqlen, dimv), dtype), # type: ignore
             
-            dh: T.Buffer((batch, head, NT*dim, dimv), dtype), # type: ignore
+            dh: T.Tensor((batch, head, NT*dim, dimv), dtype), # type: ignore
         ):
             with T.Kernel(NK, NV, batch*head, threads=thread_num) as (bx, by, bz):
                 b_dh = T.alloc_fragment((BK, BV), accum_dtype)
@@ -512,21 +512,21 @@ def chunk_bwd_kernel_dh(
                     i_t = loop_ed - 1 - i_t0
 
                     # T.copy(b_dh, dh[bb, bhead, (i_t*dim + bx*BK):(i_t*dim + (bx+1)*BK), by*BV:(by+1)*BV]) # implicit cast
-                    T.copy(b_dh, dh_shared)
-                    T.copy(dh_shared,  dh[bb, bhead, (i_t*dim + bx*BK):(i_t*dim + (bx+1)*BK), by*BV:(by+1)*BV])
+                    T.copy(b_dh, dh_shared, disable_tma=True)
+                    T.copy(dh_shared,  dh[bb, bhead, (i_t*dim + bx*BK):(i_t*dim + (bx+1)*BK), by*BV:(by+1)*BV], disable_tma=True)
 
-                    T.copy(q[bb, bheadq, i_t*BT:(i_t+1)*BT, bx*BK:(bx+1)*BK], q_shared)
-                    T.copy(d_o[bb, bhead, i_t*BT:(i_t+1)*BT, by*BV:(by+1)*BV], do_shared)
+                    T.copy(q[bb, bheadq, i_t*BT:(i_t+1)*BT, bx*BK:(bx+1)*BK], q_shared, disable_tma=True)
+                    T.copy(d_o[bb, bhead, i_t*BT:(i_t+1)*BT, by*BV:(by+1)*BV], do_shared, disable_tma=True)
                     
-                    T.copy(q_shared, q_local)
+                    T.copy(q_shared, q_local, disable_tma=True)
 
-                    T.copy(g[bb, bhead, i_t*BT:(i_t+1)*BT], bg_shared)
+                    T.copy(g[bb, bhead, i_t*BT:(i_t+1)*BT], bg_shared, disable_tma=True)
 
                     # q_mod 
                     for i,j in T.Parallel(BT, BK):
                         q_local[i,j] *= scale
 
-                    T.copy(bg_shared, bg_local)
+                    T.copy(bg_shared, bg_local, disable_tma=True)
                     bg_last[0] = bg_shared[BT-1]
                     for i,j in T.Parallel(BK, BT):
                         q_local_T[i,j] = q_local[j,i] * T.exp(bg_local[j])
@@ -625,17 +625,17 @@ def chunk_bwd_dqkg(
 
         @T.prim_func
         def main(
-            q: T.Buffer((batch, headq, seqlen, dim), dtype), # type: ignore
-            k: T.Buffer((batch, headk, seqlen, dim), dtype), # type: ignore
-            v: T.Buffer((batch, head, seqlen, dimv), dtype), # type: ignore
-            h: T.Buffer((batch, head, NT*dim, dimv), dtype), # type: ignore
-            g: T.Buffer((batch, head, seqlen), accum_dtype), # type: ignore
-            d_o: T.Buffer((batch, head, seqlen, dimv), dtype), # type: ignore
-            dh:  T.Buffer((batch, head, NT*dim, dimv), dtype), # type: ignore
+            q: T.Tensor((batch, headq, seqlen, dim), dtype), # type: ignore
+            k: T.Tensor((batch, headk, seqlen, dim), dtype), # type: ignore
+            v: T.Tensor((batch, head, seqlen, dimv), dtype), # type: ignore
+            h: T.Tensor((batch, head, NT*dim, dimv), dtype), # type: ignore
+            g: T.Tensor((batch, head, seqlen), accum_dtype), # type: ignore
+            d_o: T.Tensor((batch, head, seqlen, dimv), dtype), # type: ignore
+            dh:  T.Tensor((batch, head, NT*dim, dimv), dtype), # type: ignore
 
-            dq: T.Buffer((batch, head, seqlen, dim), dtype), # type: ignore
-            dk: T.Buffer((batch, head, seqlen, dim), dtype), # type: ignore
-            dg: T.Buffer((NK, batch, head, seqlen), accum_dtype), # type: ignore
+            dq: T.Tensor((batch, head, seqlen, dim), dtype), # type: ignore
+            dk: T.Tensor((batch, head, seqlen, dim), dtype), # type: ignore
+            dg: T.Tensor((NK, batch, head, seqlen), accum_dtype), # type: ignore
         ):
             with T.Kernel(NK, NT, batch*head, threads=thread_num) as (bx, by, bz):
                 b_g = T.alloc_fragment((BT), accum_dtype)
@@ -693,7 +693,7 @@ def chunk_bwd_dqkg(
                 bheadk = bhead // head_headk_ratio
                 bheadq = bhead // head_headq_ratio
 
-                T.copy(g[bb, bhead, by*BT:(by+1)*BT], b_g_shared)
+                T.copy(g[bb, bhead, by*BT:(by+1)*BT], b_g_shared, disable_tma=True)
                 b_g_last[0] = b_g_shared[BT-1]
 
                 T.clear(b_dg_last)
@@ -702,16 +702,16 @@ def chunk_bwd_dqkg(
                 T.clear(b_dq)
                 T.clear(b_dk)
                 for i_v in range(NV):
-                    T.copy(v[bb,bhead, by*BT:(by+1)*BT, i_v*BV:(i_v+1)*BV], b_v_shared)
-                    T.copy(d_o[bb,bhead, by*BT:(by+1)*BT, i_v*BV:(i_v+1)*BV], b_do_shared)
+                    T.copy(v[bb,bhead, by*BT:(by+1)*BT, i_v*BV:(i_v+1)*BV], b_v_shared, disable_tma=True)
+                    T.copy(d_o[bb,bhead, by*BT:(by+1)*BT, i_v*BV:(i_v+1)*BV], b_do_shared, disable_tma=True)
 
-                    T.copy(dh[bb,bhead,by*dim+bx*BK:by*dim+(bx+1)*BK, i_v*BV:(i_v+1)*BV], b_dh_shared)
-                    T.copy(h[bb,bhead,by*dim+bx*BK:by*dim+(bx+1)*BK, i_v*BV:(i_v+1)*BV], b_h_shared)
+                    T.copy(dh[bb,bhead,by*dim+bx*BK:by*dim+(bx+1)*BK, i_v*BV:(i_v+1)*BV], b_dh_shared, disable_tma=True)
+                    T.copy(h[bb,bhead,by*dim+bx*BK:by*dim+(bx+1)*BK, i_v*BV:(i_v+1)*BV], b_h_shared, disable_tma=True)
 
                     T.gemm(b_do_shared, b_v_shared, b_ds, transpose_A=False, transpose_B=True, policy=T.GemmWarpPolicy.FullRow)
                     
-                    T.copy(b_h_shared, b_h_local)
-                    T.copy(b_dh_shared, b_dh_local)
+                    T.copy(b_h_shared, b_h_local, disable_tma=True)
+                    T.copy(b_dh_shared, b_dh_local, disable_tma=True)
                     # tilelang<0.1.5
                     # for i in T.Parallel(BK*BV):
                     #     b_hdh[0,i] = b_h_local[i//BV, i % BV] * b_dh_local[i//BV, i % BV]
@@ -722,8 +722,8 @@ def chunk_bwd_dqkg(
                     for i, j in T.Parallel(BK, BV):
                         b_hdh2[i, j] = b_h_local[i,j] * b_dh_local[i,j]
                     T.reduce_sum(b_hdh2, b_dg_last_tmp2, dim=1)
-                    T.copy(b_dg_last_tmp2, b_dg_last_tmp_shared)
-                    T.copy(b_dg_last_tmp_shared, b_dg_last_tmp3)
+                    T.copy(b_dg_last_tmp2, b_dg_last_tmp_shared, disable_tma=True)
+                    T.copy(b_dg_last_tmp_shared, b_dg_last_tmp3, disable_tma=True)
                     T.reduce_sum(b_dg_last_tmp3, b_dg_last_tmp, dim=0)
                     b_dg_last[0] += b_dg_last_tmp[0]
                     
@@ -731,12 +731,12 @@ def chunk_bwd_dqkg(
                     T.gemm(b_v_shared, b_dh_shared, b_dk, transpose_A=False, transpose_B=True, policy=T.GemmWarpPolicy.FullRow)
 
                     
-                T.copy(k[bb, bheadk, by*BT:(by+1)*BT, bx*BK:(bx+1)*BK], k_shared)
-                T.copy(q[bb, bheadq, by*BT:(by+1)*BT, bx*BK:(bx+1)*BK], q_shared)
+                T.copy(k[bb, bheadk, by*BT:(by+1)*BT, bx*BK:(bx+1)*BK], k_shared, disable_tma=True)
+                T.copy(q[bb, bheadq, by*BT:(by+1)*BT, bx*BK:(bx+1)*BK], q_shared, disable_tma=True)
                 
                 b_dg_last[0] *= T.exp(b_g_last[0])
 
-                T.copy(b_g_shared, b_g)
+                T.copy(b_g_shared, b_g, disable_tma=True)
                 for i,j in T.Parallel(BT,BK):
                     b_dq[i,j] *= T.exp(b_g[i])
                     # qmod_bwd many place
@@ -748,13 +748,13 @@ def chunk_bwd_dqkg(
                 
                 
                 # possible accuracy loss
-                T.copy(b_g_shared, b_g1)
-                T.copy(b_g_shared, b_g_T)
+                T.copy(b_g_shared, b_g1, disable_tma=True)
+                T.copy(b_g_shared, b_g_T, disable_tma=True)
                 for i,j in T.Parallel(BT,BT):
                     b_ds[i,j] = T.if_then_else(
                         i >= j, b_ds[i,j]*scale*T.exp(b_g1[i]-b_g_T[j]), 0
                     )
-                T.copy(b_ds,b_ds_cast)
+                T.copy(b_ds,b_ds_cast, disable_tma=True)
                 
                 # for i in T.Parallel(BT*BK):
                 #     b_dkk[0,i] = b_dk[i//BK,i%BK]
@@ -772,26 +772,26 @@ def chunk_bwd_dqkg(
                 #     b_dkk[0,i] = k_local1[i//BK, i%BK]
                 # T.reduce_sum(b_dkk, b_dg_last_tmp, dim=1)# , clear=True)
                 # Tilelang == 0.1.5
-                T.copy(k_shared, k_local1)
+                T.copy(k_shared, k_local1, disable_tma=True)
                 for i,j in T.Parallel(BT,BK):
                     k_local1[i,j] *= b_dk[i,j]
                 T.reduce_sum(k_local1, b_dg_last_tmp4, dim=1)
-                T.copy(b_dg_last_tmp4, b_dg_last_tmp4_shared)
-                T.copy(b_dg_last_tmp4_shared, b_dg_last_tmp5)
+                T.copy(b_dg_last_tmp4, b_dg_last_tmp4_shared, disable_tma=True)
+                T.copy(b_dg_last_tmp4_shared, b_dg_last_tmp5, disable_tma=True)
                 T.reduce_sum(b_dg_last_tmp5, b_dg_last_tmp, dim=0)
                 
                 b_dg_last[0] += b_dg_last_tmp[0]
                 
                 T.gemm(b_ds_cast,k_shared,b_dq,transpose_A=False, transpose_B=False,policy=T.GemmWarpPolicy.FullRow)
-                T.copy(b_ds_cast, b_ds_shared)
+                T.copy(b_ds_cast, b_ds_shared, disable_tma=True)
                 T.gemm(b_ds_shared, q_shared, b_dk, transpose_A=True,transpose_B=False,policy=T.GemmWarpPolicy.FullRow)
                 # implicit cast
                 # T.copy(b_dq, dq_shared)
                 # T.copy(dq_shared, b_dq1)
                 for i,j in T.Parallel(BT,BK):
                     b_dg_qk[i,j] = b_dq[i,j]
-                T.copy(q_shared, q_local)
-                T.copy(k_shared, k_local)
+                T.copy(q_shared, q_local, disable_tma=True)
+                T.copy(k_shared, k_local, disable_tma=True)
                 # T.copy(b_dk, dk_shared)
                 # T.copy(dk_shared, b_dk1)
                 for i,j in T.Parallel(BT,BK):
@@ -803,14 +803,14 @@ def chunk_bwd_dqkg(
                     b_dg[i] = T.if_then_else(
                         i < BT-1, b_dg[i], b_dg[i]+b_dg_last[0]
                     )
-                T.copy(b_dq, b_dq_shared)
-                T.copy(b_dq_shared, dq[bb, bhead, by*BT:(by+1)*BT, bx*BK:(bx+1)*BK])
+                T.copy(b_dq, b_dq_shared, disable_tma=True)
+                T.copy(b_dq_shared, dq[bb, bhead, by*BT:(by+1)*BT, bx*BK:(bx+1)*BK], disable_tma=True)
                 # T.copy(b_dq, dq[bb, bhead, by*BT:(by+1)*BT, bx*BK:(bx+1)*BK])
-                T.copy(b_dk, b_dk_shared)
-                T.copy(b_dk_shared, dk[bb, bhead, by*BT:(by+1)*BT, bx*BK:(bx+1)*BK])
+                T.copy(b_dk, b_dk_shared, disable_tma=True)
+                T.copy(b_dk_shared, dk[bb, bhead, by*BT:(by+1)*BT, bx*BK:(bx+1)*BK], disable_tma=True)
                 # T.copy(b_dk, dk[bb, bhead, by*BT:(by+1)*BT, bx*BK:(bx+1)*BK])
-                T.copy(b_dg, b_g_shared)
-                T.copy(b_g_shared, dg[bx, bb, bhead, by*BT:(by+1)*BT])
+                T.copy(b_dg, b_g_shared, disable_tma=True)
+                T.copy(b_g_shared, dg[bx, bb, bhead, by*BT:(by+1)*BT], disable_tma=True)
                 # T.copy(b_dg, dg[bx, bb, bhead, by*BT:(by+1)*BT])
 
         return main
@@ -895,13 +895,13 @@ def chunk_bwd_kernel_dv(
 
         @T.prim_func
         def main(
-            q: T.Buffer((batch, headq, seqlen, dim), dtype), # type: ignore
-            k: T.Buffer((batch, headk, seqlen, dim), dtype), # type: ignore
-            g: T.Buffer((batch, head, seqlen), accum_dtype), # type: ignore
-            d_o: T.Buffer((batch, head, seqlen, dimv), dtype), # type: ignore
-            dh: T.Buffer((batch, head, NT*dim, dimv), dtype), # type: ignore
+            q: T.Tensor((batch, headq, seqlen, dim), dtype), # type: ignore
+            k: T.Tensor((batch, headk, seqlen, dim), dtype), # type: ignore
+            g: T.Tensor((batch, head, seqlen), accum_dtype), # type: ignore
+            d_o: T.Tensor((batch, head, seqlen, dimv), dtype), # type: ignore
+            dh: T.Tensor((batch, head, NT*dim, dimv), dtype), # type: ignore
             
-            dv: T.Buffer((batch, head, seqlen, dimv), dtype), # type: ignore
+            dv: T.Tensor((batch, head, seqlen, dimv), dtype), # type: ignore
         ):
             with T.Kernel(NV, NT, batch*head, threads=thread_num) as (bx, by, bz):
                 b_dv = T.alloc_fragment((BT, BV), accum_dtype)
@@ -926,23 +926,23 @@ def chunk_bwd_kernel_dv(
                 bheadk = bhead // head_headk_ratio
                 bheadq = bhead // head_headq_ratio
                 
-                T.copy(g[bb, bhead, by*BT:(by+1)*BT], b_g_shared)
-                T.copy(b_g_shared, b_g)
+                T.copy(g[bb, bhead, by*BT:(by+1)*BT], b_g_shared, disable_tma=True)
+                T.copy(b_g_shared, b_g, disable_tma=True)
                 b_g_last[0] = b_g_shared[BT-1]
                 
                 T.clear(b_dv)
                 T.clear(b_A)
                 for i_k in T.Pipelined(NK, num_stages=num_stages):
-                    T.copy(k[bb, bheadk, by*BT:(by+1)*BT, i_k*BK:(i_k+1)*BK], b_k_shared)
-                    T.copy(dh[bb, bhead, by*dim+i_k*BK:by*dim+(i_k+1)*BK, bx*BV:(bx+1)*BV], b_dh_shared)
-                    T.copy(q[bb, bheadq, by*BT:(by+1)*BT, i_k*BK:(i_k+1)*BK], b_q_shared)
+                    T.copy(k[bb, bheadk, by*BT:(by+1)*BT, i_k*BK:(i_k+1)*BK], b_k_shared, disable_tma=True)
+                    T.copy(dh[bb, bhead, by*dim+i_k*BK:by*dim+(i_k+1)*BK, bx*BV:(bx+1)*BV], b_dh_shared, disable_tma=True)
+                    T.copy(q[bb, bheadq, by*BT:(by+1)*BT, i_k*BK:(i_k+1)*BK], b_q_shared, disable_tma=True)
                     
                     T.gemm(b_k_shared, b_dh_shared, b_dv, policy=T.GemmWarpPolicy.FullRow)
                     T.gemm(b_k_shared, b_q_shared, b_A, transpose_B=True, policy=T.GemmWarpPolicy.FullRow)
                 for i,j in T.Parallel(BT, BV):
                     b_dv[i,j] *= T.exp(-b_g[i] + b_g_last[0])
-                T.copy(b_g_shared, b_g1)
-                T.copy(b_g_shared, b_g2)
+                T.copy(b_g_shared, b_g1, disable_tma=True)
+                T.copy(b_g_shared, b_g2, disable_tma=True)
                 for i,j in T.Parallel(BT, BT):
                     b_A[i,j] *= T.exp(-b_g1[i] + b_g2[j]) * scale
                 for i,j in T.Parallel(BT,BT):
@@ -950,11 +950,11 @@ def chunk_bwd_kernel_dv(
                         i <= j, b_A[i,j], 0
                     )
                 
-                T.copy(d_o[bb, bhead, by*BT:(by+1)*BT, bx*BV:(bx+1)*BV], b_do_shared)
-                T.copy(b_A,b_A_cast)
+                T.copy(d_o[bb, bhead, by*BT:(by+1)*BT, bx*BV:(bx+1)*BV], b_do_shared, disable_tma=True)
+                T.copy(b_A,b_A_cast, disable_tma=True)
                 T.gemm(b_A_cast, b_do_shared, b_dv, policy=T.GemmWarpPolicy.FullRow)
-                T.copy(b_dv, b_dv_shared)
-                T.copy(b_dv_shared, dv[bb, bhead, by*BT:(by+1)*BT, bx*BV:(bx+1)*BV])
+                T.copy(b_dv, b_dv_shared, disable_tma=True)
+                T.copy(b_dv_shared, dv[bb, bhead, by*BT:(by+1)*BT, bx*BV:(bx+1)*BV], disable_tma=True)
     
         return main
     
@@ -1192,7 +1192,7 @@ def initialize_module():
         
     BATCH, HQ, HK, H, N_CTX, D_HEAD, D_HEADV = {{BATCH}}, {{HQ}}, {{HK}}, {{H}}, {{N_CTX}}, {{D_HEAD}}, {{D_HEADV}}
 
-    linear_pass_configs = {"tl.disable_warp_specialized": True, "tl.disable_tma_lower": True}
+    linear_pass_configs = {"tl.disable_warp_specialized": True}
     chunk_fwd_h_mod = tl.compile(chunk_fwd_h(BATCH, HQ,HK, H, N_CTX, D_HEAD, D_HEADV, BT)(**tuned_config_h), {{output_idx_list_h}}, pass_configs=linear_pass_configs)
     output_idx_list = {{output_idx_list_o}}# [5,]
     chunk_fwd_o_mod = tl.compile(chunk_o(BATCH, HQ,HK, H, N_CTX, D_HEAD, D_HEADV, BT)(**tuned_config_o), output_idx_list, pass_configs=linear_pass_configs)

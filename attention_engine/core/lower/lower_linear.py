@@ -243,7 +243,7 @@ def lowerFusedVmod(v_mod, custom_io, lower_output: lowerOutput):
             lower_output.v_mod_expr_fused_o += f"T.copy({k}[{','.join([shape_idx_map_o[i] for i in v.shape_idx])}], {k}_shared)\n"
             lower_output.v_mod_expr_fused_o += f"T.copy({k}_shared, {k}_local)\n"
             lower_output.chunk_o_custom_inputs_list += (
-                f"{k}: T.Buffer(({','.join(v.shape_idx)}), dtype),\n"
+                f"{k}: T.Tensor(({','.join(v.shape_idx)}), dtype),\n"
             )
             lower_output.custom_inputs_list_o += f"{k},"
         else:
@@ -278,7 +278,7 @@ def lowerFusedVmod(v_mod, custom_io, lower_output: lowerOutput):
             lower_output.k_mod_expr_fused_h += f"T.copy({k}[{','.join([shape_idx_map_h[i] for i in v.shape_idx])}], {k}_shared)\n"
             lower_output.k_mod_expr_fused_h += f"T.copy({k}_shared, {k}_local)\n"
             lower_output.chunk_h_custom_inputs_list += (
-                f"{k}: T.Buffer(({','.join(v.shape_idx)}), dtype),\n"
+                f"{k}: T.Tensor(({','.join(v.shape_idx)}), dtype),\n"
             )
             lower_output.custom_inputs_list_h += f"{k},"
         else:

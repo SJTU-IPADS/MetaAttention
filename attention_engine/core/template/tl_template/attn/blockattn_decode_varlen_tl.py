@@ -279,11 +279,11 @@ class SparseFlashAttn(torch.nn.Module):
         program = flashattn(batch, heads, heads_kv, dim, dim_v)(
             block_N=block_size,
             block_H=self.block_H,
-            num_split=T.symbolic("num_split"),
+            num_split=T.dynamic("num_split"),
             num_stages=2,
             threads=128,
-            max_cache_seqlen={{SEQ_LEN_KV}},  # T.symbolic("max_cache_seqlen"), # Tilelang0.1.5 bug
-            num_blocks=T.symbolic("num_blocks"),
+            max_cache_seqlen={{SEQ_LEN_KV}},  # T.dynamic("max_cache_seqlen"), # Tilelang0.1.5 bug
+            num_blocks=T.dynamic("num_blocks"),
         )
 
         self.kernel = tilelang.compile(program, out_idx=-1, execution_backend="cython")

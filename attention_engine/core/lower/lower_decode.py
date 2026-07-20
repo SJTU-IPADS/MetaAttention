@@ -279,7 +279,7 @@ def lower_online_func(
             isused_doosum = True
 
         custom_bwd_inputs = (
-            "g_doosum: T.Buffer([batch, heads, seq_len], accum_dtype), \n"
+            "g_doosum: T.Tensor([batch, heads, seq_len], accum_dtype), \n"
             if isused_doosum
             else ""
         )

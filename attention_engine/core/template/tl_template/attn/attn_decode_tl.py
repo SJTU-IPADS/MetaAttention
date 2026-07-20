@@ -58,12 +58,12 @@ def kernel(batch, heads, seq_len, seq_len_kv, dim, dimv,
 
     @T.macro
     def main_split(
-        Q: T.Buffer(shape, dtype), # type: ignore
-        K: T.Buffer(shape_k, dtype), # type: ignore
-        V: T.Buffer(shape_v, dtype), # type: ignore
+        Q: T.Tensor(shape, dtype), # type: ignore
+        K: T.Tensor(shape_k, dtype), # type: ignore
+        V: T.Tensor(shape_v, dtype), # type: ignore
         {{custom_fwd_inputs | indent(8)}}
 
-        Output_partial: T.Buffer(part_shape_o, dtype), # type: ignore
+        Output_partial: T.Tensor(part_shape_o, dtype), # type: ignore
         {{final_rowscales_output | indent(8)}}
     ):
         with T.Kernel(T.ceildiv(seq_len, block_M), heads*batch, num_split, threads=thread_num) as (bx, by, bz):
@@ -155,8 +155,8 @@ def kernel(batch, heads, seq_len, seq_len_kv, dim, dimv,
     def combine(
         # g_lse
         {{final_rowscales_output | indent(8)}}
-        Output_partial: T.Buffer(part_shape_o, dtype),
-        Output: T.Buffer(shape_o, dtype),
+        Output_partial: T.Tensor(part_shape_o, dtype),
+        Output: T.Tensor(shape_o, dtype),
     ):
         with T.Kernel(T.ceildiv(seq_len, block_M2), heads, batch, threads=128) as (bx, by, bz):
             po_local = T.alloc_fragment([block_M2, dimv], dtype)
@@ -204,14 +204,14 @@ def kernel(batch, heads, seq_len, seq_len_kv, dim, dimv,
 
     @T.prim_func
     def main(
-        Q: T.Buffer(shape, dtype),
-        K: T.Buffer(shape_k, dtype),
-        V: T.Buffer(shape_v, dtype),
+        Q: T.Tensor(shape, dtype),
+        K: T.Tensor(shape_k, dtype),
+        V: T.Tensor(shape_v, dtype),
         {{custom_fwd_inputs | indent(8)}}
         # g_lse
         {{final_rowscales_output | indent(8)}}
-        Output_partial: T.Buffer(part_shape_o, dtype), # [batch, seqlen_q, heads, num_split, dim]
-        Output: T.Buffer(shape_o, dtype),
+        Output_partial: T.Tensor(part_shape_o, dtype), # [batch, seqlen_q, heads, num_split, dim]
+        Output: T.Tensor(shape_o, dtype),
     ):
         # flash_attn_split(Q, K, V, glse, Output_partial)
         main_split(Q, K, V, {{custom_fwd_inputs_list}} Output_partial, {{final_rowscales_list}})

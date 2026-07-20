@@ -16,7 +16,7 @@ def dtype_map(dtype: str) -> str:
 
 
 def arg_def(arg) -> str:
-    return f"{arg.name}: T.Buffer({arg.shape}, {dtype_map(arg.dtype)}),"
+    return f"{arg.name}: T.Tensor({arg.shape}, {dtype_map(arg.dtype)}),"
 
 
 def alloc_op(mem_type: str, arg) -> str:

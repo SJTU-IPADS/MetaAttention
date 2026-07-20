@@ -538,7 +538,7 @@ def lower_online_func(
             isused_doosum = True
 
         custom_bwd_inputs = (
-            "g_doosum: T.Buffer([batch, heads, seq_len], accum_dtype), \n"
+            "g_doosum: T.Tensor([batch, heads, seq_len], accum_dtype), \n"
             if isused_doosum
             else ""
         )
@@ -818,9 +818,9 @@ def lower_tl(
 ):
 
     # convert 0 to symbolic
-    Batch = f"T.symbolic('{Batch}')" if isinstance(Batch, str) else Batch
-    head = f"T.symbolic('{head}')" if isinstance(head, str) else head
-    seqlen = f"T.symbolic('{seqlen}')" if isinstance(seqlen, str) else seqlen
+    Batch = f"T.dynamic('{Batch}')" if isinstance(Batch, str) else Batch
+    head = f"T.dynamic('{head}')" if isinstance(head, str) else head
+    seqlen = f"T.dynamic('{seqlen}')" if isinstance(seqlen, str) else seqlen
     lower_output = lowerOutput(
         BATCH=str(Batch),
         HEADS=str(head),
