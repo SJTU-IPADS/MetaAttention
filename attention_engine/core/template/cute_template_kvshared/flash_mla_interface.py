@@ -17,6 +17,12 @@ repo_dir = Path(
     os.path.join(os.path.dirname(os.path.abspath(__file__)), "../../../../")
 )
 cutlass_dir = repo_dir / "3rd_parties" / "cutlass_39"
+python_cuda_root = Path(torch.__file__).parent.parent / "nvidia"
+cuda_nvcc_include = python_cuda_root / "cuda_nvcc" / "include"
+if (cuda_nvcc_include / "crt" / "host_runtime.h").is_file():
+    os.environ["PYTORCH_NVCC"] = str(
+        Path(__file__).parent.parent / "third_party" / "nvidia" / "backend" / "bin" / "nvcc"
+    )
 
 sources = [
     os.path.join(os.path.dirname(__file__), "flash_api.cpp"),
@@ -55,6 +61,12 @@ flash_mla_cuda = torch.utils.cpp_extension.load(
     + cc_flag,
     extra_include_paths=[
         str(cutlass_dir / "include"),
+        str(Path(torch.__file__).parent.parent / "nvidia" / "cuda_runtime" / "include"),
+        str(Path(torch.__file__).parent.parent / "nvidia" / "cuda_nvcc" / "include"),
+        str(Path(torch.__file__).parent.parent / "nvidia" / "cuda_cccl" / "include"),
+        str(Path(torch.__file__).parent.parent / "nvidia" / "cublas" / "include"),
+        str(Path(torch.__file__).parent.parent / "nvidia" / "cusparse" / "include"),
+        str(Path(torch.__file__).parent.parent / "nvidia" / "cusolver" / "include"),
     ],
     with_cuda=True,
     # build_directory=os.path.expanduser("~/.cache/torch_extensions/flash_mla_cuda"),

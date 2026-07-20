@@ -496,6 +496,7 @@ if not SKIP_CUDA_BUILD:
         nvcc_path_new = os.path.join(ctk_path_new, f"nvcc{exe_extension}")
         # Need to append to path otherwise nvcc can't find cicc in nvvm/bin/cicc
         # nvcc 12.8 seems to hard-code looking for cicc in ../nvvm/bin/cicc
+        previous_pytorch_nvcc = os.environ.get("PYTORCH_NVCC")
         os.environ["PATH"] = ctk_path_new + os.pathsep + os.environ["PATH"]
         os.environ["PYTORCH_NVCC"] = nvcc_path_new
         # Make nvcc executable, sometimes after the copy it loses its permissions
@@ -612,6 +613,28 @@ if not SKIP_CUDA_BUILD:
         str(Path(this_dir)),
         str(cutlass_dir / "include"),
     ]
+    # CUTLASS 3.9 uses libcudacxx headers such as <cuda/std/utility>.
+    # Prefer the toolkit-matched CCCL supplied with the active Python CUDA
+    # stack; CUDA 13's system CCCL cannot be consumed by the downloaded CUDA
+    python_cuda_root = Path(torch.__file__).parent.parent / "nvidia"
+    cuda_runtime_include = python_cuda_root / "cuda_runtime" / "include"
+    if (cuda_runtime_include / "cuda_runtime.h").is_file():
+        include_dirs.append(str(cuda_runtime_include))
+    cuda_nvcc_include = python_cuda_root / "cuda_nvcc" / "include"
+    if (cuda_nvcc_include / "crt" / "host_runtime.h").is_file():
+        include_dirs.append(str(cuda_nvcc_include))
+    for library in ("cublas", "cusparse", "cusolver"):
+        library_include = python_cuda_root / library / "include"
+        if library_include.is_dir():
+            include_dirs.append(str(library_include))
+    cccl_candidates = [
+        python_cuda_root / "cuda_cccl" / "include",
+        Path(CUDA_HOME) / "include" / "cccl",
+    ]
+    for cccl_include in cccl_candidates:
+        if (cccl_include / "cuda" / "std" / "utility").is_file():
+            include_dirs.append(str(cccl_include))
+            break
 
     flash_attn_3_cuda = torch.utils.cpp_extension.load(
         name="flash_attn_3_hopper_cuda"
@@ -626,6 +649,11 @@ if not SKIP_CUDA_BUILD:
         extra_include_paths=include_dirs,
         with_cuda=True,
     )
+    if bare_metal_version != Version("12.8"):
+        if previous_pytorch_nvcc is None:
+            os.environ.pop("PYTORCH_NVCC", None)
+        else:
+            os.environ["PYTORCH_NVCC"] = previous_pytorch_nvcc
 
 
 # isort: on
