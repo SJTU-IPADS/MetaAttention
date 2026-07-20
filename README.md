@@ -95,17 +95,21 @@ Expected output includes `AttentionEngine Succuessfully created.`
 
 # Functional tests
 
-Run the following commands to verify the correctness of supported Attention operators mentioned in Sections 3 & 4 of the paper.
+Run the unified pytest suite from the repository root. The unit suite is CPU-safe and checks imports, code generation, benchmark dispatch, CSV schemas, and PDF plotting without compiling GPU kernels:
 ```bash
-# forward correctness + package smoke path
-python -m pytest attention_engine/tests/test_forward.py attention_engine/tests/test_blockmask.py
+uv run --extra test pytest -q tests/unit
 
-# legacy full functional script, may take about 10 minutes
-python testing/test.py
+# imports for all 14 official example factories
+uv run --extra test pytest -q -m examples tests/unit/test_example_imports.py
 ```
-The pytest path covers forward-only correctness checks and package smoke tests. The legacy script runs the broader parallel and recurrent functional suite against reference implementations (e.g., PyTorch).
 
-**Expected Output**: The pytest path runs forward correctness checks (skipping GPU-only cases when no CUDA/HIP-visible GPU is available) and blockmask tests. The legacy script should print All tests passed. (There may be some warnings from baselines, but they can be ignored.)
+Run the GPU correctness suite explicitly:
+```bash
+uv run --extra test pytest -q --run-gpu -m 'functional and gpu' tests/functional
+```
+This executes the legacy 10-case parity matrix plus direct-engine and official v2 factory coverage. Forward results, backward gradients where supported, reference implementations, dtypes, and operator-specific tolerances are checked. Without `--run-gpu`, GPU tests are collected but skipped with an explicit reason; without a CUDA/HIP-visible device, the hardware fixture skips them.
+
+**Expected output**: all unit tests pass. On a supported GPU, all functional tests run without unconditional skips. Optional baseline warnings do not replace MetaAttention correctness checks.
 
 
 # Performance tests
@@ -122,21 +126,21 @@ Baseline libraries (e.g., FlashAttention, FlashLinearAttention) are frequently u
 - Target Device: NVIDIA H100-80GB GPU
 - Description: Evaluates the performance of MetaAttention against baselines on the H100.
 
-Run the following command:
+Run the guarded long-run pytest entrypoint (about 90 minutes on the target hardware):
 ```bash
-# take about 90 minutes
-python testing/benchmark_h100.py
+CUDA_VISIBLE_DEVICES=0 uv run --extra test --extra bench pytest -q \
+  --run-benchmarks -m 'benchmark and h100' tests/benchmarks/test_h100.py
 ```
-The figure will be saved as `./figure11_h100.pdf`.
+The runner executes all 62 Figure 11 configurations in an isolated pytest temporary directory, validates 24 CSV files containing `MetaAttention` rows, and renders a non-empty `figure11_h100.pdf`. Missing optional baselines are reported and omitted rather than replaced with fabricated values.
 
 ## Figure 14
 
 - Target Device: AMD MI250X GPU
 - Description: Evaluates the performance of MetaAttention on the AMD backend.
 
-Run the following command:
+Run the guarded long-run pytest entrypoint (about 20 minutes on the target hardware):
 ```bash
-# take about 20 minutes
-python testing/benchmark_mi250.py
+HIP_VISIBLE_DEVICES=0 uv run --extra test --extra bench pytest -q \
+  --run-benchmarks -m 'benchmark and mi250' tests/benchmarks/test_mi250.py
 ```
-The figure will be saved as `./figure14_mi250.pdf`.
+The runner executes all 25 Figure 14 configurations in an isolated pytest temporary directory, validates 10 CSV files containing `MetaAttention` rows, and renders a non-empty `figure14_mi250.pdf`. On a non-HIP runtime or non-MI250 device, it skips with the unmet hardware prerequisite.
