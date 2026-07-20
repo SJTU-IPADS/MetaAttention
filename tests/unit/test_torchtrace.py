@@ -1,7 +1,13 @@
+import operator
+
+import pytest
 import torch
 import torch.fx as fx
-import operator
-from core.transform.core import IndentedCode
+
+from core.utils import IndentedCode
+
+
+pytestmark = pytest.mark.unit
 
 
 def sliding_window_mask(b, h, q_idx, kv_idx):
@@ -21,33 +27,29 @@ def tl_codegen(node: fx.Node) -> str:
     if node.op == "call_function":
         if is_operator_func(node.target):
             return f"{node} = operator.{node.target.__name__}({', '.join([str(arg) for arg in node.args])})"
-        elif node.target in supported_ops:
+        if node.target in supported_ops:
             return f"{node} = {supported_ops[node.target]}({', '.join([str(arg) for arg in node.args])})"
-        else:
-            raise NotImplementedError(f"Operator {node.target} is not supported")
-    elif node.op == "placeholder":
+        raise NotImplementedError(f"Operator {node.target} is not supported")
+    if node.op in {"placeholder", "output"}:
         return ""
-    elif node.op == "output":
-        return ""
-    else:
-        raise NotImplementedError(f"Operator {node.op} is not supported")
+    raise NotImplementedError(f"Operator {node.op} is not supported")
 
 
 def lower_graph(mask_graph: fx.GraphModule) -> IndentedCode:
-    graph = mask_graph.graph
     mask_code = IndentedCode()
-    for node in graph.nodes:
-        print(node)
-        print(node.op)
-        print(node.args)
-        print(tl_codegen(node))
+    for node in mask_graph.graph.nodes:
         mask_code.add_line(tl_codegen(node))
     return mask_code
 
 
-if __name__ == "__main__":
-    mask_graph = fx.symbolic_trace(sliding_window_mask)
-    print(mask_graph)
-    print(type(mask_graph))
-    mask_code = lower_graph(mask_graph)
-    print(mask_code)
+def test_sliding_window_mask_lowering_uses_operator_and():
+    mask_code = lower_graph(fx.symbolic_trace(sliding_window_mask))
+    assert "operator.and_" in str(mask_code)
+
+
+def test_lowering_unsupported_operator_raises():
+    def unsupported_mask(x):
+        return torch.sin(x)
+
+    with pytest.raises(NotImplementedError, match="is not supported"):
+        lower_graph(fx.symbolic_trace(unsupported_mask))

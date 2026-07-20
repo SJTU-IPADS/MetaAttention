@@ -1,7 +1,12 @@
+import pytest
+
+
 from core import Var
 from core.transform.core import SymbolicColReduceArray
 from core.codegen.tl_gen import generate_tl_from_dag
 from core.template.attn_template import TlAttnTemplate
+
+pytestmark = pytest.mark.unit
 
 
 class _OnlineSoftmax:

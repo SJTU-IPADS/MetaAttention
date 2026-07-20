@@ -1,4 +1,9 @@
+import pytest
+
+
 from core.transform.core import create_block_mask, is_causal_mask, is_less_causal_mask
+
+pytestmark = pytest.mark.unit
 
 
 # mask on attention score

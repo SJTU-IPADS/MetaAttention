@@ -131,6 +131,7 @@ class AttentionEngine:
         kv_shared=False,
     ):
         self.use_varlen = use_varlen
+        self._mla_cute = False
         # tunner
         # need_engine_fuse, fuse_config = decider(qkv_meta, device)
 
@@ -237,6 +238,10 @@ class AttentionEngine:
                 block_table = torch.arange(
                     b * max_seqlen_pad // 64, dtype=torch.int32, device="cuda"
                 ).view(b, max_seqlen_pad // 64)
+                self._mla_cache_seqlens = cache_seqlens
+                self._mla_page_block_size = 64
+                self._mla_max_seqlen_pad = max_seqlen_pad
+
                 self.attention = partial(
                     cute_attn.flash_mla_with_kvcache,
                     cache_seqlens=cache_seqlens,
@@ -246,6 +251,7 @@ class AttentionEngine:
                     num_splits=num_split,
                     causal=True if mask_mod is not None else False,
                 )
+                self._mla_cute = True
                 self.block_mask = None
 
     def _select_lower_template(
@@ -461,6 +467,33 @@ class AttentionEngine:
             self.block_mask = None
 
     def __call__(self, *args, **kargs):
+        if self._mla_cute:
+            if len(args) == 2:
+                q, k_cache = args
+            elif len(args) == 4:
+                q, q_pe, key_value, key_pe = args
+                q = torch.cat((q, q_pe), dim=-1).contiguous()
+                kv = torch.cat((key_value, key_pe), dim=-1).contiguous()
+                page_size = self._mla_page_block_size
+                max_seqlen_pad = self._mla_max_seqlen_pad
+                if kv.shape[1] < max_seqlen_pad:
+                    kv = torch.nn.functional.pad(
+                        kv, (0, 0, 0, 0, 0, max_seqlen_pad - kv.shape[1])
+                    )
+                k_cache = kv.view(
+                    kv.shape[0] * (max_seqlen_pad // page_size),
+                    page_size,
+                    kv.shape[2],
+                    kv.shape[3],
+                )
+            else:
+                raise TypeError(
+                    "CUTE MLA expects (q, k_cache) or "
+                    "(q, q_pe, key_value, key_pe)"
+                )
+            result = self.attention(q, k_cache)
+            return result[0] if isinstance(result, tuple) else result
+
         if kargs.get("block_mask") is not None:
             args = args + (kargs["block_mask"],)
         elif self.block_mask is not None:
@@ -468,5 +501,4 @@ class AttentionEngine:
         if self.use_varlen:
             args = args + (kargs.get("cache_seqlens"),)
 
-        o = self.attention(*args)
-        return o
+        return self.attention(*args)

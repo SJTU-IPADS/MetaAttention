@@ -8,6 +8,7 @@ dependencies = [
   "einops",
   "jinja2",
   "matplotlib",
+  "ninja",
   "numpy<2",
   "sympy",
   "termcolor",
@@ -81,4 +82,21 @@ core = [
 ]
 attn_engine = [
   "cache/*.py",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
+markers = [
+  "unit: CPU and import-safe unit tests",
+  "examples: official example factory smoke tests",
+  "functional: attention correctness tests",
+  "gpu: requires a CUDA or HIP GPU",
+  "benchmark: long-running benchmark runner",
+  "slow: long-running test",
+  "h100: requires an H100-compatible CUDA runner",
+  "mi250: requires an MI250-compatible HIP runner",
+  "plot: PDF plotting contract tests",
+  "io: CSV and artifact I/O contract tests",
+  "baseline: optional baseline integration",
 ]
