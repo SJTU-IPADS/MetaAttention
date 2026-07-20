@@ -27,6 +27,7 @@ import urllib.request
 import urllib.error
 
 import torch.utils.cpp_extension
+import tilelang
 from torch.utils.cpp_extension import CUDA_HOME
 
 os.environ["TORCH_CUDA_ARCH_LIST"] = "9.0a"
@@ -513,6 +514,8 @@ if not SKIP_CUDA_BUILD:
         os.path.join(os.path.dirname(os.path.abspath(__file__)), "../../../../")
     )
     cutlass_dir = repo_dir / "3rd_parties" / "cutlass_dc4817"
+    if not (cutlass_dir / "include" / "cute" / "tensor.hpp").is_file():
+        cutlass_dir = Path(tilelang.__file__).parent / "3rdparty" / "cutlass"
 
     feature_args = (
         []

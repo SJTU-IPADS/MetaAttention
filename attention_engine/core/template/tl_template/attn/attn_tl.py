@@ -408,7 +408,7 @@ def flashattn_bwd(batch, heads, seq_len, dim, dimv, tune=False):
                 loop_st = T.floordiv(by * block_M, block_N) if is_casual else 0
                 loop_ed = T.ceildiv(seq_len, block_N)
 
-                for k in T.Pipelined(loop_st, loop_ed, num_stages=num_stages):
+                for k in range(loop_st, loop_ed):
                     T.copy(Q[bz, k * block_N : (k + 1) * block_N, bx, :], q)
                     {{custom_fwd_inputs_load_shared_bwd | indent(20)}}
                     T.clear(qkT)

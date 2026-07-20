@@ -701,7 +701,7 @@ def chunk_bwd_dqkg(
                 T.clear(b_ds)
                 T.clear(b_dq)
                 T.clear(b_dk)
-                for i_v in T.Pipelined(NV, num_stages=num_stages):
+                for i_v in range(NV):
                     T.copy(v[bb,bhead, by*BT:(by+1)*BT, i_v*BV:(i_v+1)*BV], b_v_shared)
                     T.copy(d_o[bb,bhead, by*BT:(by+1)*BT, i_v*BV:(i_v+1)*BV], b_do_shared)
 
@@ -1192,9 +1192,10 @@ def initialize_module():
         
     BATCH, HQ, HK, H, N_CTX, D_HEAD, D_HEADV = {{BATCH}}, {{HQ}}, {{HK}}, {{H}}, {{N_CTX}}, {{D_HEAD}}, {{D_HEADV}}
 
-    chunk_fwd_h_mod = tl.compile(chunk_fwd_h(BATCH, HQ,HK, H, N_CTX, D_HEAD, D_HEADV, BT)(**tuned_config_h), {{output_idx_list_h}})
+    linear_pass_configs = {"tl.disable_warp_specialized": True, "tl.disable_tma_lower": True}
+    chunk_fwd_h_mod = tl.compile(chunk_fwd_h(BATCH, HQ,HK, H, N_CTX, D_HEAD, D_HEADV, BT)(**tuned_config_h), {{output_idx_list_h}}, pass_configs=linear_pass_configs)
     output_idx_list = {{output_idx_list_o}}# [5,]
-    chunk_fwd_o_mod = tl.compile(chunk_o(BATCH, HQ,HK, H, N_CTX, D_HEAD, D_HEADV, BT)(**tuned_config_o), output_idx_list, )
+    chunk_fwd_o_mod = tl.compile(chunk_o(BATCH, HQ,HK, H, N_CTX, D_HEAD, D_HEADV, BT)(**tuned_config_o), output_idx_list, pass_configs=linear_pass_configs)
 
     # bwd
     BT_BWD=None
@@ -1226,10 +1227,11 @@ def initialize_module():
             'num_stages': {{num_stages_dv}},
             'num_threads': {{num_threads_dv}}
         }
-    chunk_fwd_h_mod_2 = tl.compile(chunk_fwd_h(BATCH, HQ,HK, H, N_CTX, D_HEAD, D_HEADV, BT_BWD)(**tuned_config_h_2), {{output_idx_list_h}})
-    chunk_bwd_dh_mod = tl.compile(chunk_bwd_kernel_dh(BATCH, HQ, HK, H, N_CTX, D_HEAD, D_HEADV, BT_BWD)(**tuned_config_dh), [5,])
-    chunk_bwd_dqkg_mod = tl.compile(chunk_bwd_dqkg(BATCH, HQ, HK, H, N_CTX, D_HEAD, D_HEADV, BT_BWD)( **tuned_config_dqkg), [7,8,9,])
-    chunk_bwd_dv_mod = tl.compile(chunk_bwd_kernel_dv(BATCH, HQ, HK, H, N_CTX, D_HEAD, D_HEADV, BT_BWD)( **tuned_config_dv), [5,])
+    chunk_fwd_h_mod_2 = tl.compile(chunk_fwd_h(BATCH, HQ,HK, H, N_CTX, D_HEAD, D_HEADV, BT_BWD)(**tuned_config_h_2), {{output_idx_list_h}}, pass_configs=linear_pass_configs)
+    backward_pass_configs = linear_pass_configs
+    chunk_bwd_dh_mod = tl.compile(chunk_bwd_kernel_dh(BATCH, HQ, HK, H, N_CTX, D_HEAD, D_HEADV, BT_BWD)(**tuned_config_dh), [5,], pass_configs=backward_pass_configs)
+    chunk_bwd_dqkg_mod = tl.compile(chunk_bwd_dqkg(BATCH, HQ, HK, H, N_CTX, D_HEAD, D_HEADV, BT_BWD)( **tuned_config_dqkg), [7,8,9,], pass_configs=backward_pass_configs)
+    chunk_bwd_dv_mod = tl.compile(chunk_bwd_kernel_dv(BATCH, HQ, HK, H, N_CTX, D_HEAD, D_HEADV, BT_BWD)( **tuned_config_dv), [5,], pass_configs=backward_pass_configs)
 
     _IS_INITIALIZED = True
 

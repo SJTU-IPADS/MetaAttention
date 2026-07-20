@@ -35,7 +35,7 @@ explicit = true
 
 [tool.uv.sources]
 torch = [{ index = "pytorch-cu128" }]
-tilelang = { git = "https://github.com/tile-ai/tilelang.git", rev = "41b95a5dfafea78f200b7253c6f7527c04ee522e" }
+tilelang = { git = "https://github.com/tile-ai/tilelang.git", rev = "61f968b6c5c00c8986b9331d599f95dfee7a60cd" }
 
 [dependency-groups]
 dev = [

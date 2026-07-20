@@ -9,7 +9,7 @@ from examples.reluattn_v2 import relu_attention as relu_attention_v2
 from examples.retnet_recurrent import retnet_recurrent
 from examples.retention_parallel import retention_parallel
 from examples.mamba2 import mamba2
-from examples.mla_decode_v2 import mla_decode
+from examples.mla_decode import mla_decode
 from examples.sparse_gqa_decode import sparse_gqa_decode
 
 from plot_fig_h100 import plot_figure11
@@ -332,7 +332,7 @@ def bench_softmaxattention(
         assert not require_grad
         attention_module = softmax_attention_decode(B, H, Sq, S, D, DV)
     else:
-        attention_module = causal_softmax_attention(B, H, S, D, DV, tune=True)
+        attention_module = causal_softmax_attention(B, H, S, D, DV)
 
     def ours():
         o = attention_module(query, key, value)
@@ -345,21 +345,21 @@ def bench_softmaxattention(
     else:
         ours_bwd_lat = None
 
-    attention_module_v2 = causal_softmax_attention_v2(B, H, S, D, DV)
+    try:
+        attention_module_v2 = causal_softmax_attention_v2(B, H, S, D, DV)
 
-    def ours_v2():
-        o = attention_module_v2(query, key, value)
-        return o
+        def ours_v2():
+            return attention_module_v2(query, key, value)
 
-    ours_fwd_lat_v2 = do_bench(ours_v2)
-    if require_grad:
-        o = attention_module_v2(query, key, value)
-        ours_bwd_lat_v2 = do_bench(lambda: o.backward(do, retain_graph=True))
-    else:
-        ours_bwd_lat_v2 = None
-    ours_fwd_lat = min(ours_fwd_lat, ours_fwd_lat_v2)
-    if require_grad:
-        ours_bwd_lat = min(ours_bwd_lat, ours_bwd_lat_v2)
+        ours_fwd_lat = min(ours_fwd_lat, do_bench(ours_v2))
+        if require_grad:
+            o = attention_module_v2(query, key, value)
+            ours_bwd_lat = min(
+                ours_bwd_lat,
+                do_bench(lambda: o.backward(do, retain_graph=True)),
+            )
+    except Exception as e:
+        print(f"Warning: MetaAttention CuTe v2 not available: {e}")
 
     result_dict["MetaAttention"] = (ours_fwd_lat, ours_bwd_lat)
 
@@ -577,8 +577,7 @@ def bench_sigmoidattention(B, H, S, D, DV, dtype=torch.float16, require_grad=Tru
     softmax_bias_2 = softmax_bias.to("cpu")
 
     # ours
-    attention_module = sigmoid_attention(B, H, S, D, DV, tune=True)
-    attention_module_v2 = sigmoid_attention_v2(B, H, S, D, DV)
+    attention_module = sigmoid_attention(B, H, S, D, DV)
 
     query1 = query.clone().detach().requires_grad_(False)
     key1 = key.clone().detach().requires_grad_(False)
@@ -589,10 +588,14 @@ def bench_sigmoidattention(B, H, S, D, DV, dtype=torch.float16, require_grad=Tru
     if require_grad:
         o = attention_module(query, key, value, softmax_bias)
         bwd_lat = do_bench(lambda: o.backward(do, retain_graph=True))
-    fwd_lat_v2 = do_bench(
-        lambda: attention_module_v2(query1, key1, value1, softmax_bias_1)
-    )
-    fwd_lat = min(fwd_lat, fwd_lat_v2)
+    try:
+        attention_module_v2 = sigmoid_attention_v2(B, H, S, D, DV)
+        fwd_lat = min(
+            fwd_lat,
+            do_bench(lambda: attention_module_v2(query1, key1, value1, softmax_bias_1)),
+        )
+    except Exception as e:
+        print(f"Warning: MetaAttention CuTe v2 not available: {e}")
     result_dict["MetaAttention"] = (fwd_lat, bwd_lat)
 
     # flash-sigmoid
@@ -677,14 +680,16 @@ def bench_reluattention(
     do = torch.randn(B, S, H, DV, device=device, dtype=dtype, requires_grad=False)
 
     # ours
-    attention_module = relu_attention(B, H, S, D, DV, dtype=dtype, tune=True)
+    attention_module = relu_attention(B, H, S, D, DV, dtype=dtype)
     fwd_lat = do_bench(lambda: attention_module(query, key, value))
     if require_grad:
         o = attention_module(query, key, value)
         bwd_lat = do_bench(lambda: o.backward(do, retain_graph=True))
-    attention_module_v2 = relu_attention_v2(B, H, S, D, DV, dtype=dtype)
-    fwd_lat_v2 = do_bench(lambda: attention_module_v2(query, key, value))
-    fwd_lat = min(fwd_lat, fwd_lat_v2)
+    try:
+        attention_module_v2 = relu_attention_v2(B, H, S, D, DV, dtype=dtype)
+        fwd_lat = min(fwd_lat, do_bench(lambda: attention_module_v2(query, key, value)))
+    except Exception as e:
+        print(f"Warning: MetaAttention CuTe v2 not available: {e}")
     result_dict["MetaAttention"] = (fwd_lat, bwd_lat)
 
     # Pytorch ReLU Attention
@@ -735,7 +740,7 @@ def bench_gated_retention(
     v1.detach_().requires_grad_(require_grad)
 
     # ours
-    attention_module = gated_retention(B, H, S, D, DV, dtype=dtype, tune=True)
+    attention_module = gated_retention(B, H, S, D, DV, dtype=dtype)
     fwd_lat = do_bench(lambda: attention_module(q, k, v, g))
     if require_grad:
         o = attention_module(q, k, v, g)
@@ -819,7 +824,7 @@ def bench_retnet_recurrent(
     v1.detach_().requires_grad_(require_grad)
 
     # ours
-    attention_module = retnet_recurrent(B, H, S, D, DV, dtype=dtype, tune=True)
+    attention_module = retnet_recurrent(B, H, S, D, DV, dtype=dtype)
     fwd_lat = do_bench(lambda: attention_module(q, k, v, g))
     if require_grad:
         o = attention_module(q, k, v, g)
@@ -889,7 +894,7 @@ def bench_retention_parallel(
     )
 
     # ours
-    attention_module = retention_parallel(B, H, S, D, DV, dtype=dtype, tune=True)
+    attention_module = retention_parallel(B, H, S, D, DV, dtype=dtype)
     fwd_lat = do_bench(lambda: attention_module(q, k, v, mask))
 
     result_dict["MetaAttention"] = (fwd_lat, None)
@@ -955,7 +960,7 @@ def bench_mamba2_ssm(
     A_ours = A_ours.detach().requires_grad_(require_grad)
     dt_ours = dt_ours.detach().requires_grad_(require_grad)
 
-    attention_module = mamba2(B, HQ, S, D, DV, HK, HV, dtype=dtype, tune=True)
+    attention_module = mamba2(B, HQ, S, D, DV, HK, HV, dtype=dtype)
     fwd_lat = do_bench(
         lambda: attention_module(
             q_ours, k_ours, v_ours, dt_ours, A_ours, dt_ours.to(dtype)
@@ -1215,14 +1220,15 @@ def bench_mla_decode(B, HQ, SKV, D, DV, HKV=1, dtype=torch.bfloat16):
     result_dict = {}
 
     q = torch.randn(B, 1, HQ, D, dtype=dtype, device="cuda")
-    # To be compatible with flashMLA
-    KV = torch.randn(B * SKV // 64, 64, HKV, DV, dtype=dtype, device="cuda")
-    k_pe = torch.randn(B * SKV // 64, 64, HKV, D - DV, dtype=dtype, device="cuda")
-    KV = torch.concat([KV, k_pe], dim=-1).contiguous()
+    q_nope, q_pe = q[..., :DV].contiguous(), q[..., DV:].contiguous()
+    kv = torch.randn(B, SKV, HKV, DV, dtype=dtype, device="cuda")
+    k_pe = torch.randn(B, SKV, HKV, D - DV, dtype=dtype, device="cuda")
+    # Blocked layout used by FlashMLA baselines.
+    KV = torch.concat([kv, k_pe], dim=-1).reshape(B * SKV // 64, 64, HKV, D).contiguous()
 
     # ours
     attention_module = mla_decode(B, HQ, SKV, D, DV, HK=HKV, HV=HKV, dtype=dtype)
-    fwd_lat = do_bench(lambda: attention_module(q, KV))
+    fwd_lat = do_bench(lambda: attention_module(q_nope, q_pe, kv, k_pe))
     result_dict["MetaAttention"] = (fwd_lat, None)
 
     # flashMLA

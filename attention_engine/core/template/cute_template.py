@@ -17,6 +17,7 @@ class CuteAttnTemplate:
     def __init__(self, template_dir=TEMPLATE_DIR, output_dir=OUTPUT_DIR, **kwargs):
 
         for root, dirs, files in os.walk(template_dir):
+            dirs[:] = [directory for directory in dirs if directory != "__pycache__"]
             # 计算相对于模板目录的相对路径
             rel_path = os.path.relpath(root, template_dir)
 
@@ -26,7 +27,7 @@ class CuteAttnTemplate:
 
             for file in files:
                 file_path = os.path.join(root, file)
-                with open(file_path, "r") as f:
+                with open(file_path, "r", encoding="utf-8") as f:
                     template1 = f.read()
 
                 self.render_code(template1, **kwargs)
@@ -37,14 +38,14 @@ class CuteAttnTemplate:
                 # 检查文件是否已存在且内容相同
                 skip_write = False
                 if os.path.exists(dest_file):
-                    with open(dest_file, "r") as f:
+                    with open(dest_file, "r", encoding="utf-8") as f:
                         existing_content = f.read()
                     if existing_content == self.tlcode:
                         skip_write = True
 
                 # 只有当文件不存在或内容不同时才写入
                 if not skip_write:
-                    with open(dest_file, "w") as f:
+                    with open(dest_file, "w", encoding="utf-8") as f:
                         f.write(self.tlcode)
 
     def render_code(self, temp_code, **kwargs):
