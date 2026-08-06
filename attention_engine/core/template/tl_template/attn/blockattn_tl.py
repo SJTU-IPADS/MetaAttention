@@ -22,6 +22,9 @@ except KeyError:
     
     
 # TL_GLOBAL_FUNC = """
+def fast_tanh(A, B):
+    return T.call_extern("handle", "fasttanh", T.address_of(A), T.address_of(B))
+
 def make_dq_layout(dQ):
     # atomicAdd can not be vectorized, so we need to reorder dq to match the 8x8 gemm fragment
     return T.Layout(

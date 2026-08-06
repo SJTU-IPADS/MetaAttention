@@ -32,7 +32,7 @@ class Var(Node):
         pass
 
     def __str__(self):
-        return f'{self.type}("{self.name}")'
+        return f"{self.type}(\"{self.name}\")"
 
     def print_grad(self):
         print(f"{self.name} grad: {self.grad}")
@@ -145,8 +145,7 @@ class Log(Node):
 
     def _backward(self, grad: Node):
         raise NotImplementedError
-
-
+    
 class Log2(Node):
     def __init__(self, node: Node):
         super().__init__("Log2")
@@ -181,16 +180,14 @@ class Max(Node):
 
     def _backward(self, grad: Node):
         raise NotImplementedError
-
-
+    
 class MaxBwd(Node):
     def __init__(self, grad: Node, left: Node, right: Node):
         super().__init__("MaxBwd")
         self.inputs = [grad, left, right]
-
+        
     def _backward(self, grad: Node):
         raise NotImplementedError
-
 
 # reduce ops
 
@@ -221,7 +218,6 @@ class ReduceAbsSum(Node):
     def _backward(self, grad: Node):
         raise NotImplementedError
 
-
 class ColReduceMax(Node):
     def __init__(self, node: Node):
         super().__init__("ColReduceMax")
@@ -229,17 +225,15 @@ class ColReduceMax(Node):
 
     def _backward(self, grad: Node):
         raise NotImplementedError
-
-
+    
 class ColReduceSum(Node):
     def __init__(self, node: Node):
         super().__init__("ColReduceSum")
         self.inputs = [node]
 
     def _backward(self, grad: Node):
-        raise NotImplementedError
-
-
+        raise NotImplementedError 
+    
 class ColReduceAbsSum(Node):
     def __init__(self, node: Node):
         super().__init__("ColReduceAbsSum")
@@ -247,6 +241,7 @@ class ColReduceAbsSum(Node):
 
     def _backward(self, grad: Node):
         raise NotImplementedError
+
 
 
 if __name__ == "__main__":

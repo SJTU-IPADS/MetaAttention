@@ -1,14 +1,18 @@
 import jinja2
+import os
 import os.path as osp
 
 TEMPLATE_DIR = osp.join(
-    osp.dirname(osp.abspath(__file__)), "tl_template/attn/attn_tl.py"
-)
+    osp.dirname(
+        osp.abspath(__file__)),
+    'tl_template/attn/attn_tl.py')
 
 
 class TlAttnTemplate:
-    def __init__(self, template_dir=TEMPLATE_DIR, **kargs):
-        with open(template_dir, "r") as f:
+    def __init__(self, template_dir=TEMPLATE_DIR,
+                 **kargs
+                 ):
+        with open(template_dir, 'r') as f:
             TL_KERNEL = f.read()
 
         template = jinja2.Template(TL_KERNEL)
@@ -24,6 +28,5 @@ class TlAttnTemplate:
 if __name__ == "__main__":
     tl_code = TlAttnTemplate()()
     print(tl_code)
-    namespace = {}
-    exec(tl_code, namespace)
-    print(namespace["attention"])
+    exec(tl_code)
+    print(attention)
