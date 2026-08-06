@@ -13,16 +13,8 @@ cc_flag = []
 cc_flag.append("-gencode")
 cc_flag.append("arch=compute_90a,code=sm_90a")
 
-repo_dir = Path(
-    os.path.join(os.path.dirname(os.path.abspath(__file__)), "../../../../")
-)
+repo_dir = Path(os.path.join(os.path.dirname(os.path.abspath(__file__)), "../../../../"))
 cutlass_dir = repo_dir / "3rd_parties" / "cutlass_39"
-python_cuda_root = Path(torch.__file__).parent.parent / "nvidia"
-cuda_nvcc_include = python_cuda_root / "cuda_nvcc" / "include"
-if (cuda_nvcc_include / "crt" / "host_runtime.h").is_file():
-    os.environ["PYTORCH_NVCC"] = str(
-        Path(__file__).parent.parent / "third_party" / "nvidia" / "backend" / "bin" / "nvcc"
-    )
 
 sources = [
     os.path.join(os.path.dirname(__file__), "flash_api.cpp"),
@@ -31,14 +23,10 @@ sources = [
     os.path.join(os.path.dirname(__file__), "kernels", "splitkv_mla.cu"),
 ]
 flash_mla_cuda = torch.utils.cpp_extension.load(
-    name="flash_mla_hopper_cuda"
-    + "{{dimqk}}_{{dimv}}_{{cutlass_dtype}}".replace("::", "_").replace(" ", "_"),
+    name="flash_mla_hopper_cuda"+"{{dimqk}}_{{dimv}}_{{cutlass_dtype}}".replace("::", "_").replace(" ", "_"),
     sources=sources,
     extra_cflags=[
-        "-O3",
-        "-std=c++17",
-        "-DNDEBUG",
-        "-Wno-deprecated-declarations",
+        "-O3", "-std=c++17", "-DNDEBUG", "-Wno-deprecated-declarations",
         # "-DFLASH_MLA_DISABLE_FP16"
     ],
     extra_cuda_cflags=[
@@ -56,17 +44,10 @@ flash_mla_cuda = torch.utils.cpp_extension.load(
         "--use_fast_math",
         "--ptxas-options=-v,--register-usage-level=10",
         # "-DFLASH_MLA_DISABLE_FP16",
-        "-lineinfo",
-    ]
-    + cc_flag,
+        "-lineinfo"
+    ] + cc_flag,
     extra_include_paths=[
         str(cutlass_dir / "include"),
-        str(Path(torch.__file__).parent.parent / "nvidia" / "cuda_runtime" / "include"),
-        str(Path(torch.__file__).parent.parent / "nvidia" / "cuda_nvcc" / "include"),
-        str(Path(torch.__file__).parent.parent / "nvidia" / "cuda_cccl" / "include"),
-        str(Path(torch.__file__).parent.parent / "nvidia" / "cublas" / "include"),
-        str(Path(torch.__file__).parent.parent / "nvidia" / "cusparse" / "include"),
-        str(Path(torch.__file__).parent.parent / "nvidia" / "cusolver" / "include"),
     ],
     with_cuda=True,
     # build_directory=os.path.expanduser("~/.cache/torch_extensions/flash_mla_cuda"),
@@ -88,9 +69,7 @@ def get_mla_metadata(
         tile_scheduler_metadata: (num_sm_parts, TileSchedulerMetaDataSize), dtype torch.int32.
         num_splits: (batch_size + 1), dtype torch.int32.
     """
-    return flash_mla_cuda.get_mla_metadata(
-        cache_seqlens, num_heads_per_head_k, num_heads_k
-    )
+    return flash_mla_cuda.get_mla_metadata(cache_seqlens, num_heads_per_head_k, num_heads_k)
 
 
 def flash_mla_with_kvcache(

@@ -9,7 +9,7 @@ class RTX4090(Arch):
         self.compute_max_core = 128
         self.warp_size = 32
         self.sm_partition = 4
-        self.transaction_size = [32, 128]  # in bytes
+        self.transaction_size = [32, 128]   # in bytes
         self.max_smem_usage = 100 * 1024
         self.bandwidth = [1008, 0]  # TODO: 1
         self.platform = "CUDA"
@@ -18,3 +18,4 @@ class RTX4090(Arch):
         self.mma_primitive = [16, 8, 16]
         self.threads_per_mma = 32
         self.threads_cap = 1024
+        

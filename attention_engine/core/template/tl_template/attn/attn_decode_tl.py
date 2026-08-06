@@ -22,6 +22,9 @@ except KeyError:
     attn_device = H100()
 
 # TL_GLOBAL_FUNC = """
+def fast_tanh(A, B):
+    return T.call_extern("handle", "fasttanh", T.address_of(A), T.address_of(B))
+
 def make_dq_layout(dQ):
     # atomicAdd can not be vectorized, so we need to reorder dq to match the 8x8 gemm fragment
     return T.Layout(
@@ -104,7 +107,7 @@ def kernel(batch, heads, seq_len, seq_len_kv, dim, dimv,
                 T.ceildiv(seq_len_kv // num_split, block_N)
             )
 
-            for k in range(loop_range):
+            for k in T.Pipelined(loop_range, num_stages=num_stages):
                 T.copy(K[bid, (seq_len_kv // num_split) * sid + k * block_N : (seq_len_kv // num_split) * sid + (k + 1) * block_N, hid, :], K_shared)
 
                 # TODO: copy custom_fwd_input_tensor in score_mod&online_func
@@ -159,10 +162,10 @@ def kernel(batch, heads, seq_len, seq_len_kv, dim, dimv,
         Output: T.Buffer(shape_o, dtype),
     ):
         with T.Kernel(T.ceildiv(seq_len, block_M2), heads, batch, threads=128) as (bx, by, bz):
-            po_local = T.alloc_fragment([block_M2, dimv], dtype)
-            po_shared = T.alloc_shared([block_M2, dimv], dtype)
-            o_accum_local = T.alloc_fragment([block_M2, dimv], accum_dtype)
-            o_shared = T.alloc_shared([block_M2, dimv], dtype)
+            po_local = T.alloc_fragment([block_M2, dim], dtype)
+            po_shared = T.alloc_shared([block_M2, dim], dtype)
+            o_accum_local = T.alloc_fragment([block_M2, dim], accum_dtype)
+            o_shared = T.alloc_shared([block_M2, dim], dtype)
             
             # lse_local = T.alloc_fragment([num_split, block_M], dtype)
             # row_sum_local = T.alloc_fragment([num_split, block_M], dtype)
@@ -193,10 +196,10 @@ def kernel(batch, heads, seq_len, seq_len_kv, dim, dimv,
             #     scale_o_local[i, j] = T.exp2(lse_local[i, j] - lse_logsum_local[j])
             {{combinekernel_combine | indent(12)}}
             
-            for k in range(num_split):
+            for k in T.Pipelined(num_split, num_stages=2):
                 T.copy(Output_partial[bz, bx * block_M2:(bx + 1) * block_M2, by, k, :], po_shared)
                 T.copy(po_shared, po_local)
-                for i, j in T.Parallel(block_M2, dimv):
+                for i, j in T.Parallel(block_M2, dim):
                     # o_accum_local[i, j] += po_local[i, j] * scale_o_local[k, i]
                     o_accum_local[i, j] += po_local[i, j] * {{combinekernel_scale_o_varname}}[k, i]
             T.copy(o_accum_local, o_shared)

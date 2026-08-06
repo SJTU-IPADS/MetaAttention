@@ -1,8 +1,9 @@
+import argparse
 import math
+import random
 import torch
 import triton
 import triton.language as tl
-
 
 @triton.jit
 def _mla_attn_kernel(
@@ -39,19 +40,12 @@ def _mla_attn_kernel(
 
     offs_d_ckv = tl.arange(0, HEAD_DIM_CKV)
     cur_head = cur_head_id * BLOCK_H + tl.arange(0, BLOCK_H)
-    offs_q_nope = (
-        cur_batch * stride_q_nope_bs
-        + cur_head[:, None] * stride_q_nope_h
-        + offs_d_ckv[None, :]
-    )
+    offs_q_nope = cur_batch * stride_q_nope_bs + cur_head[:, None] * stride_q_nope_h + offs_d_ckv[
+        None, :]
     q_nope = tl.load(Q_nope + offs_q_nope)
 
     offs_d_kpe = tl.arange(0, HEAD_DIM_KPE)
-    offs_q_pe = (
-        cur_batch * stride_q_pe_bs
-        + cur_head[:, None] * stride_q_pe_h
-        + offs_d_kpe[None, :]
-    )
+    offs_q_pe = cur_batch * stride_q_pe_bs + cur_head[:, None] * stride_q_pe_h + offs_d_kpe[None, :]
     q_pe = tl.load(Q_pe + offs_q_pe)
 
     e_max = tl.zeros([BLOCK_H], dtype=tl.float32) - float("inf")
@@ -71,16 +65,12 @@ def _mla_attn_kernel(
         )
         kv_loc = kv_page_number * PAGE_SIZE + offs_n % PAGE_SIZE
         offs_k_c = kv_loc[None, :] * stride_kv_c_bs + offs_d_ckv[:, None]
-        k_c = tl.load(
-            Kv_c_cache + offs_k_c, mask=offs_n[None, :] < split_kv_end, other=0.0
-        )
+        k_c = tl.load(Kv_c_cache + offs_k_c, mask=offs_n[None, :] < split_kv_end, other=0.0)
 
         qk = tl.dot(q_nope, k_c.to(q_nope.dtype))
 
         offs_k_pe = kv_loc[None, :] * stride_k_pe_bs + offs_d_kpe[:, None]
-        k_pe = tl.load(
-            K_pe_cache + offs_k_pe, mask=offs_n[None, :] < split_kv_end, other=0.0
-        )
+        k_pe = tl.load(K_pe_cache + offs_k_pe, mask=offs_n[None, :] < split_kv_end, other=0.0)
 
         qk += tl.dot(q_pe, k_pe.to(q_pe.dtype))
         qk *= sm_scale
@@ -97,19 +87,11 @@ def _mla_attn_kernel(
 
         e_sum = e_sum * re_scale + tl.sum(p, 1)
         e_max = n_e_max
-    offs_o = (
-        cur_batch * stride_o_b
-        + cur_head[:, None] * stride_o_h
-        + split_kv_id * stride_o_s
-        + offs_d_ckv[None, :]
-    )
+    offs_o = cur_batch * stride_o_b + cur_head[:,
+                                               None] * stride_o_h + split_kv_id * stride_o_s + offs_d_ckv[
+                                                   None, :]
     tl.store(O + offs_o, acc / e_sum[:, None])
-    offs_o_1 = (
-        cur_batch * stride_o_b
-        + cur_head * stride_o_h
-        + split_kv_id * stride_o_s
-        + HEAD_DIM_CKV
-    )
+    offs_o_1 = cur_batch * stride_o_b + cur_head * stride_o_h + split_kv_id * stride_o_s + HEAD_DIM_CKV
     tl.store(O + offs_o_1, e_max + tl.log(e_sum))
 
 
@@ -130,7 +112,7 @@ def _mla_attn(
     head_dim_kpe = q_pe.shape[-1]
 
     BLOCK_H = 16 if torch.version.cuda is not None else 64  # TODO: adjust for amd
-    BLOCK_N = 64 if torch.version.cuda is not None else 16  # TODO: adjust for amd
+    BLOCK_N = 64 if torch.version.cuda is not None else 16 # TODO: adjust for amd
     grid = (
         triton.cdiv(head_num, BLOCK_H),
         batch_size,
@@ -272,92 +254,37 @@ def mla_decode_triton(
     )
 
 
-def flash_mla_triton(
-    q_nope,
-    q_pe,
-    block_table,
-    blocked_k_nope,
-    blocked_k_pe,
-    max_seqlen_pad,
-    block_size,
-    b,
-    s_q,
-    cache_seqlens,
-    h_q,
-    h_kv,
-    d,
-    dv,
-    causal,
-    dtype,
-):
-
+def flash_mla_triton(q_nope, q_pe, block_table, blocked_k_nope, blocked_k_pe, max_seqlen_pad, block_size, b, s_q,
+                         cache_seqlens, h_q, h_kv, d, dv, causal, dtype):
+    
     num_kv_splits = 8
     o = torch.empty([b * s_q, h_q, dv], device=q_nope.device, dtype=dtype)
-    attn_logits = torch.empty(
-        [b * s_q, h_q, num_kv_splits, dv + 1], device=q_nope.device, dtype=dtype
-    )
+    attn_logits = torch.empty([b * s_q, h_q, num_kv_splits, dv + 1], device=q_nope.device, dtype=dtype)
     mla_decode_triton(
-        q_nope.view(-1, h_q, dv),
-        q_pe.view(-1, h_q, d - dv),
-        blocked_k_nope.view(-1, dv),
-        blocked_k_pe.view(-1, d - dv),
-        o,
-        block_table,
-        cache_seqlens,
-        attn_logits,
-        num_kv_splits,
-        1 / math.sqrt(d),
-        block_size,
-    )
+        q_nope.view(-1, h_q, dv), q_pe.view(-1, h_q, d - dv), blocked_k_nope.view(-1, dv),
+        blocked_k_pe.view(-1, d - dv), o, block_table, cache_seqlens, attn_logits,
+        num_kv_splits, 1 / math.sqrt(d), block_size)
     return o.view([b, s_q, h_q, dv])
 
-
 @torch.inference_mode()
-def run_flash_mla_triton(
-    q,
-    block_table,
-    blocked_k,
-    max_seqlen_pad,
-    block_size,
-    b,
-    s_q,
-    cache_seqlens,
-    h_q,
-    h_kv,
-    d,
-    dv,
-    causal,
-    dtype,
-):
+def run_flash_mla_triton(q, block_table, blocked_k, max_seqlen_pad, block_size, b, s_q,
+                         cache_seqlens, h_q, h_kv, d, dv, causal, dtype):
 
-    blocked_k[..., :dv]
+    blocked_v = blocked_k[..., :dv]
 
     assert d > dv, "mla with rope dim should be larger than no rope dim"
     q_nope, q_pe = q[..., :dv].contiguous(), q[..., dv:].contiguous()
-    blocked_k_nope, blocked_k_pe = (
-        blocked_k[..., :dv].contiguous(),
-        blocked_k[..., dv:].contiguous(),
-    )
+    blocked_k_nope, blocked_k_pe = blocked_k[..., :dv].contiguous(), blocked_k[...,
+                                                                               dv:].contiguous()
 
     def flash_mla_triton():
         num_kv_splits = 8
         o = torch.empty([b * s_q, h_q, dv], device=q.device, dtype=dtype)
-        attn_logits = torch.empty(
-            [b * s_q, h_q, num_kv_splits, dv + 1], device=q.device, dtype=dtype
-        )
+        attn_logits = torch.empty([b * s_q, h_q, num_kv_splits, dv + 1], device=q.device, dtype=dtype)
         mla_decode_triton(
-            q_nope.view(-1, h_q, dv),
-            q_pe.view(-1, h_q, d - dv),
-            blocked_k_nope.view(-1, dv),
-            blocked_k_pe.view(-1, d - dv),
-            o,
-            block_table,
-            cache_seqlens,
-            attn_logits,
-            num_kv_splits,
-            1 / math.sqrt(d),
-            block_size,
-        )
+            q_nope.view(-1, h_q, dv), q_pe.view(-1, h_q, d - dv), blocked_k_nope.view(-1, dv),
+            blocked_k_pe.view(-1, d - dv), o, block_table, cache_seqlens, attn_logits,
+            num_kv_splits, 1 / math.sqrt(d), block_size)
         return o.view([b, s_q, h_q, dv])
 
     out_flash = flash_mla_triton()

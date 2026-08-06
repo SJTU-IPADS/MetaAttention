@@ -15,7 +15,7 @@ class A100(Arch):
         self.warp_size = 32
 
         self.sm_partition = 4
-        self.transaction_size = [32, 128]  # in bytes
+        self.transaction_size = [32, 128]   # in bytes
         self.bandwidth = [1319, 16308]
         self.platform = "CUDA"
         self.compute_capability = "80"

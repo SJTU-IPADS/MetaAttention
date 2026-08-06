@@ -2,16 +2,15 @@ import torch
 import flash_attn
 import flash_attn_interface
 import itertools
+import time
 import math
 
 import torch.utils.benchmark as benchmark
-
 
 def round_up_to_power_of_2(x):
     if x <= 1:
         return 1
     return 1 << (x - 1).bit_length()
-
 
 def timeit(fn, *args, **kwargs):
     torch.cuda.synchronize()
@@ -22,7 +21,8 @@ def timeit(fn, *args, **kwargs):
 
     # Benchmark using PyTorch Timer
     t = benchmark.Timer(
-        stmt="fn(*args, **kwargs)", globals={"fn": fn, "args": args, "kwargs": kwargs}
+        stmt='fn(*args, **kwargs)',
+        globals={'fn': fn, 'args': args, 'kwargs': kwargs}
     )
 
     # Measure execution time
@@ -31,7 +31,6 @@ def timeit(fn, *args, **kwargs):
     avg_time = measurement.mean  # Average time in seconds
 
     return avg_time
-
 
 def main():
     num_sms = torch.cuda.get_device_properties(
@@ -44,7 +43,7 @@ def main():
     causal = True
     # causal = False
     # dtype=torch.float16
-    dtype = torch.bfloat16
+    dtype=torch.bfloat16
     tp_degree = 1
 
     torch.manual_seed(42)
@@ -67,18 +66,16 @@ def main():
 
     all_batch_configs = []
 
-    all_batch_configs.extend(
-        itertools.product(
-            # [1024, 2048, 4096, 8192, 16384, 32768, 131072],  # context_seqlen
-            # [4096, 16384, 65536],  # context_seqlen
-            [131072],  # context_seqlen
-            # [i for i in range(1, (num_sms) + 1)], # num_requests
-            [1, 4, 8, 16],  # num_requests
-            # [1],  # num_requests
-            # [1, 4, 8, 16],  # query_seqlen
-            [1],  # query_seqlen
-        )
-    )
+    all_batch_configs.extend(itertools.product(
+        # [1024, 2048, 4096, 8192, 16384, 32768, 131072],  # context_seqlen
+        # [4096, 16384, 65536],  # context_seqlen
+        [131072],  # context_seqlen
+        # [i for i in range(1, (num_sms) + 1)], # num_requests
+        [1, 4, 8, 16],  # num_requests
+        # [1],  # num_requests
+        # [1, 4, 8, 16],  # query_seqlen
+        [1],  # query_seqlen
+    ))
 
     num_caches = max(reqs for _, reqs, _ in all_batch_configs)
     cache_seqlen = max(seqlen for seqlen, _, _ in all_batch_configs)
@@ -86,9 +83,7 @@ def main():
     for model_name, nheads_q, nheads_kv, headdim in model_configs:
         assert nheads_kv % tp_degree == 0
         print(f"***{model_name}***")
-        print(
-            f"QHEADS:{nheads_q}, KVHEADS:{nheads_kv}, HEADDIM:{headdim}, TP:{tp_degree}"
-        )
+        print(f"QHEADS:{nheads_q}, KVHEADS:{nheads_kv}, HEADDIM:{headdim}, TP:{tp_degree}")
         nheads_q //= tp_degree
         nheads_kv //= tp_degree
 
@@ -100,45 +95,31 @@ def main():
         )
 
         if check_all_splits is False:
-            print(
-                f"{'CONTEXT':<9}{'BSZ':<5}{'QLEN':<6}{'FA2':<10}{'FA3':<9}{'RATIO':<7}{'GB/s':<10}"
-            )
+            print(f"{'CONTEXT':<9}{'BSZ':<5}{'QLEN':<6}{'FA2':<10}{'FA3':<9}{'RATIO':<7}{'GB/s':<10}")
 
         for context_seqlen, num_requests, query_seqlen in all_batch_configs:
-            bytes_kv = context_seqlen * num_requests * nheads_kv * headdim * 4
-            query_seqlen * num_requests * nheads_q * headdim * 4
-            blockH = round_up_to_power_of_2(nheads_q // nheads_kv)
-            blockM = 128  # true for hdim 128 causal and hdim 64
-            blockM_div_H = blockM // blockH
-            num_work_tiles = (
-                nheads_kv * num_requests * math.ceil(query_seqlen / blockM_div_H)
-            )
+            bytes_kv = (context_seqlen * num_requests * nheads_kv * headdim * 4)
+            bytes_q = (query_seqlen * num_requests * nheads_q * headdim * 4)
+            blockH = round_up_to_power_of_2(nheads_q//nheads_kv)
+            blockM = 128 # true for hdim 128 causal and hdim 64
+            blockM_div_H = blockM//blockH
+            num_work_tiles = nheads_kv * num_requests * math.ceil(query_seqlen/blockM_div_H)
 
-            q = torch.randn(
-                (num_requests, query_seqlen, nheads_q, headdim),
-                device="cuda",
-                dtype=dtype,
-            )
-            cache_idxs = torch.randperm(num_caches, dtype=torch.int32, device="cuda")[
-                :num_requests
-            ]
+            q = torch.randn((num_requests, query_seqlen, nheads_q, headdim), device="cuda", dtype=dtype)
+            cache_idxs = torch.randperm(num_caches, dtype=torch.int32, device="cuda")[:num_requests]
             cache_seqlens = torch.tensor(
                 [context_seqlen] * num_requests, dtype=torch.int32, device="cuda"
             )
 
-            fa2_time_heuristic = (
-                timeit(
-                    flash_attn.flash_attn_with_kvcache,
-                    q=q,
-                    k_cache=k_cache,
-                    v_cache=v_cache,
-                    cache_seqlens=cache_seqlens,
-                    cache_batch_idx=cache_idxs,
-                    causal=causal,
-                )
-                * 1000.0
-                * 1000.0
-            )
+            fa2_time_heuristic = timeit(
+                flash_attn.flash_attn_with_kvcache,
+                q=q,
+                k_cache=k_cache,
+                v_cache=v_cache,
+                cache_seqlens=cache_seqlens,
+                cache_batch_idx=cache_idxs,
+                causal=causal,
+            ) * 1000. * 1000.
             # fastest_splitk_time = float("inf")
             # fastest_splitk = 0
             # for i in range(1, max_splits):
@@ -156,58 +137,48 @@ def main():
             #         fastest_splitk_time = t
             #         fastest_splitk = i
 
-            (
-                timeit(
-                    flash_attn_interface.flash_attn_with_kvcache,
-                    q=q,
-                    k_cache=k_cache,
-                    v_cache=v_cache,
-                    cache_seqlens=cache_seqlens,
-                    cache_batch_idx=cache_idxs,
-                    causal=causal,
-                    pack_gqa=False,
-                    num_splits=1,
-                )
-                * 1000.0
-                * 1000.0
-            )
+            fa3_time_one_split = timeit(
+                flash_attn_interface.flash_attn_with_kvcache,
+                q=q,
+                k_cache=k_cache,
+                v_cache=v_cache,
+                cache_seqlens=cache_seqlens,
+                cache_batch_idx=cache_idxs,
+                causal=causal,
+                pack_gqa=False,
+                num_splits=1,
+            ) * 1000. * 1000.
 
-            fa3_time_gqa_heuristic = (
-                timeit(
-                    flash_attn_interface.flash_attn_with_kvcache,
-                    q=q,
-                    k_cache=k_cache,
-                    v_cache=v_cache,
-                    cache_seqlens=cache_seqlens,
-                    cache_batch_idx=cache_idxs,
-                    causal=causal,
-                    pack_gqa=True,
-                    num_splits=0,
-                    # max_seqlen_k_hint=context_seqlen
-                )
-                * 1000.0
-                * 1000.0
-            )
+            fa3_time_gqa_heuristic = timeit(
+                flash_attn_interface.flash_attn_with_kvcache,
+                q=q,
+                k_cache=k_cache,
+                v_cache=v_cache,
+                cache_seqlens=cache_seqlens,
+                cache_batch_idx=cache_idxs,
+                causal=causal,
+                pack_gqa=True,
+                num_splits=0,
+                # max_seqlen_k_hint=context_seqlen
+            ) * 1000. * 1000.
 
             if check_all_splits:
+
+                fa3_fastest_num_splits = 0
                 fa3_fastest_splitk_time = float("inf")
 
                 for num_splits in range(1, max_splits):
-                    t = (
-                        timeit(
-                            flash_attn_interface.flash_attn_with_kvcache,
-                            q=q,
-                            k_cache=k_cache,
-                            v_cache=v_cache,
-                            cache_seqlens=cache_seqlens,
-                            cache_batch_idx=cache_idxs,
-                            causal=causal,
-                            pack_gqa=False,
-                            num_splits=num_splits,
-                        )
-                        * 1000.0
-                        * 1000.0
-                    )
+                    t = timeit(
+                        flash_attn_interface.flash_attn_with_kvcache,
+                        q=q,
+                        k_cache=k_cache,
+                        v_cache=v_cache,
+                        cache_seqlens=cache_seqlens,
+                        cache_batch_idx=cache_idxs,
+                        causal=causal,
+                        pack_gqa=False,
+                        num_splits=num_splits
+                    ) * 1000. * 1000.
 
                     out0 = flash_attn_interface.flash_attn_with_kvcache(
                         q=q,
@@ -217,7 +188,7 @@ def main():
                         cache_batch_idx=cache_idxs,
                         causal=causal,
                         pack_gqa=False,
-                        num_splits=num_splits,
+                        num_splits=num_splits
                     )
 
                     out1 = flash_attn_interface.flash_attn_with_kvcache(
@@ -228,7 +199,7 @@ def main():
                         cache_batch_idx=cache_idxs,
                         causal=causal,
                         pack_gqa=False,
-                        num_splits=1,
+                        num_splits=1
                     )
 
                     max_diff = (out0 - out1).abs().max().item()
@@ -236,37 +207,28 @@ def main():
                     # print (f"splits {num_splits}, out diff-max, {max_diff}, out diff-mean, {mean_diff}, time {t:.2f}")
                     # print (f"splits {num_splits}, time {t:.2f}")
 
-                    if (
-                        math.isnan(max_diff)
-                        or math.isnan(mean_diff)
-                        or max_diff > 2e-3
-                        or mean_diff > 1e-4
-                    ):
-                        print(
-                            f"Numerical error too high: Splits: {num_splits}, Max: {max_diff}, Mean: {mean_diff}"
-                        )
+                    if math.isnan(max_diff) or math.isnan(mean_diff) or max_diff > 2e-3 or mean_diff > 1e-4:
+                        print(f"Numerical error too high: Splits: {num_splits}, Max: {max_diff}, Mean: {mean_diff}")
 
                     if t < fa3_fastest_splitk_time:
                         fa3_fastest_splitk_time = t
+                        fa3_fastest_num_splits = num_splits
 
                 fa3_fastest_num_splits_gqa = 0
                 fa3_fastest_splitk_time_gqa = float("inf")
                 for num_splits in range(1, max_splits):
-                    t = (
-                        timeit(
-                            flash_attn_interface.flash_attn_with_kvcache,
-                            q=q,
-                            k_cache=k_cache,
-                            v_cache=v_cache,
-                            cache_seqlens=cache_seqlens,
-                            cache_batch_idx=cache_idxs,
-                            causal=causal,
-                            pack_gqa=True,
-                            num_splits=num_splits,
-                        )
-                        * 1000.0
-                        * 1000.0
-                    )
+
+                    t = timeit(
+                        flash_attn_interface.flash_attn_with_kvcache,
+                        q=q,
+                        k_cache=k_cache,
+                        v_cache=v_cache,
+                        cache_seqlens=cache_seqlens,
+                        cache_batch_idx=cache_idxs,
+                        causal=causal,
+                        pack_gqa=True,
+                        num_splits=num_splits
+                    ) * 1000. * 1000.
 
                     out0 = flash_attn_interface.flash_attn_with_kvcache(
                         q=q,
@@ -276,7 +238,7 @@ def main():
                         cache_batch_idx=cache_idxs,
                         causal=causal,
                         pack_gqa=True,
-                        num_splits=num_splits,
+                        num_splits=num_splits
                     )
 
                     out1 = flash_attn_interface.flash_attn_with_kvcache(
@@ -287,7 +249,7 @@ def main():
                         cache_batch_idx=cache_idxs,
                         causal=causal,
                         pack_gqa=True,
-                        num_splits=1,
+                        num_splits=1
                     )
 
                     max_diff = (out0 - out1).abs().max().item()
@@ -295,58 +257,44 @@ def main():
                     # print (f"gqa splits {num_splits}, out gqa diff-max {max_diff}, out gqa diff-mean {mean_diff}, time {t:.2f}")
                     # print (f"gqa splits {num_splits}, time {t:.2f}")
 
-                    if (
-                        math.isnan(max_diff)
-                        or math.isnan(mean_diff)
-                        or max_diff > 2e-3
-                        or mean_diff > 1e-4
-                    ):
-                        print(
-                            f"Numerical error too high (gqa): Splits: {num_splits}, Max: {max_diff}, Mean: {mean_diff}"
-                        )
+                    if math.isnan(max_diff) or math.isnan(mean_diff) or max_diff > 2e-3 or mean_diff > 1e-4:
+                        print(f"Numerical error too high (gqa): Splits: {num_splits}, Max: {max_diff}, Mean: {mean_diff}")
 
                     if t < fa3_fastest_splitk_time_gqa:
                         fa3_fastest_splitk_time_gqa = t
                         fa3_fastest_num_splits_gqa = num_splits
 
-                efficiency = (num_work_tiles * fa3_fastest_num_splits_gqa) / num_sms
-                heuristic_ratio = fa3_time_gqa_heuristic / fa3_fastest_splitk_time_gqa
+                efficiency = (num_work_tiles * fa3_fastest_num_splits_gqa)/num_sms
+                heuristic_ratio = fa3_time_gqa_heuristic/fa3_fastest_splitk_time_gqa
                 # remeasure to smooth anomalies
                 if heuristic_ratio > 1.1:
-                    fa3_time_gqa_heuristic = (
-                        timeit(
-                            flash_attn_interface.flash_attn_with_kvcache,
-                            q=q,
-                            k_cache=k_cache,
-                            v_cache=v_cache,
-                            cache_seqlens=cache_seqlens,
-                            cache_batch_idx=cache_idxs,
-                            causal=causal,
-                            pack_gqa=True,
-                            # num_splits=num_splits_select,
-                            # num_splits=1,
-                            num_splits=0,
-                            # max_seqlen_k_hint=context_seqlen
-                        )
-                        * 1000.0
-                        * 1000.0
-                    )
 
-                    fa3_fastest_splitk_time_gqa = (
-                        timeit(
-                            flash_attn_interface.flash_attn_with_kvcache,
-                            q=q,
-                            k_cache=k_cache,
-                            v_cache=v_cache,
-                            cache_seqlens=cache_seqlens,
-                            cache_batch_idx=cache_idxs,
-                            causal=causal,
-                            pack_gqa=True,
-                            num_splits=fa3_fastest_num_splits_gqa,
-                        )
-                        * 1000.0
-                        * 1000.0
-                    )
+                    fa3_time_gqa_heuristic = timeit(
+                        flash_attn_interface.flash_attn_with_kvcache,
+                        q=q,
+                        k_cache=k_cache,
+                        v_cache=v_cache,
+                        cache_seqlens=cache_seqlens,
+                        cache_batch_idx=cache_idxs,
+                        causal=causal,
+                        pack_gqa=True,
+                        # num_splits=num_splits_select,
+                        # num_splits=1,
+                        num_splits=0,
+                        # max_seqlen_k_hint=context_seqlen
+                    ) * 1000. * 1000.
+
+                    fa3_fastest_splitk_time_gqa = timeit(
+                        flash_attn_interface.flash_attn_with_kvcache,
+                        q=q,
+                        k_cache=k_cache,
+                        v_cache=v_cache,
+                        cache_seqlens=cache_seqlens,
+                        cache_batch_idx=cache_idxs,
+                        causal=causal,
+                        pack_gqa=True,
+                        num_splits=fa3_fastest_num_splits_gqa
+                    ) * 1000. * 1000.
 
             if check_all_splits is True:
                 print(
@@ -364,18 +312,19 @@ def main():
                     # f"FA3 NOGQA NUM SPLITS:{fa3_fastest_num_splits}, "
                     f"FA3 NUM SPLITS:{fa3_fastest_num_splits_gqa}, "
                     # f"RATIO (FA2/3):{fa2_time_heuristic/fa3_time_gqa_heuristic:.2f}, "
-                    f"RATIO:{fa3_time_gqa_heuristic / fa3_fastest_splitk_time_gqa:.2f}, "
+                    f"RATIO:{fa3_time_gqa_heuristic/fa3_fastest_splitk_time_gqa:.2f}, "
                     f"EFF:{efficiency:.2f}, "
-                    f"GB/s:{bytes_kv / fa3_time_gqa_heuristic * 1e-3:.2f}"
+                    f"GB/s:{bytes_kv/fa3_time_gqa_heuristic * 1e-3:.2f}"
                 )
 
             if check_all_splits is False:
                 print(
                     f"{context_seqlen:<9}{num_requests:<5}{query_seqlen:<6}"
                     f"{fa2_time_heuristic:<10.2f}{fa3_time_gqa_heuristic:<9.2f}"
-                    f"{fa2_time_heuristic / fa3_time_gqa_heuristic:<7.2f}"
-                    f"{bytes_kv / fa3_time_gqa_heuristic * 1e-3:<10.2f}"
+                    f"{fa2_time_heuristic/fa3_time_gqa_heuristic:<7.2f}"
+                    f"{bytes_kv/fa3_time_gqa_heuristic * 1e-3:<10.2f}"
                 )
+
 
 
 if __name__ == "__main__":

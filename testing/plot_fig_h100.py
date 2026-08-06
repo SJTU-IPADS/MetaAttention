@@ -4,102 +4,128 @@ import matplotlib.pyplot as plt
 import matplotlib.gridspec as gridspec
 import numpy as np
 import matplotlib.ticker as ticker
+import argparse
+from matplotlib.ticker import MultipleLocator
 import os
+import csv
 from plot_utils import load_csv_data
 
-colormap = plt.cm.Set2  # LinearSegmentedColormap
+colormap = plt.cm.Set2# LinearSegmentedColormap
+
 
 
 def plot_figure11(results_dir, output_path="figure11_h100.pdf"):
-
+    
     # load data for figure11
     deepseek_fwd_providers, deepseek_fwd_times_data = load_csv_data(
-        os.path.join(results_dir, "deepseek_fwd.csv"), exclude_kv=False
+        os.path.join(results_dir, 'deepseek_fwd.csv'), 
+        exclude_kv=False
     )
     deepseek_bwd_providers, deepseek_bwd_times_data = load_csv_data(
-        os.path.join(results_dir, "deepseek_bwd.csv"), exclude_kv=True
+        os.path.join(results_dir, 'deepseek_bwd.csv'), 
+        exclude_kv=True
     )
-
+    
     llama_fwd_providers, llama_fwd_times_data = load_csv_data(
-        os.path.join(results_dir, "llama_fwd.csv"), exclude_kv=False
+        os.path.join(results_dir, 'llama_fwd.csv'), 
+        exclude_kv=False
     )
-
+    
     llama_bwd_providers, llama_bwd_times_data = load_csv_data(
-        os.path.join(results_dir, "llama_bwd.csv"), exclude_kv=True
+        os.path.join(results_dir, 'llama_bwd.csv'),
+        exclude_kv=True
     )
-
+    
     dit_fwd_providers, dit_fwd_times_data = load_csv_data(
-        os.path.join(results_dir, "dit_fwd.csv"), exclude_kv=False
+        os.path.join(results_dir, 'dit_fwd.csv'),
+        exclude_kv=False
     )
-
+    
     dit_bwd_providers, dit_bwd_times_data = load_csv_data(
-        os.path.join(results_dir, "dit_bwd.csv"), exclude_kv=True
+        os.path.join(results_dir, 'dit_bwd.csv'),
+        exclude_kv=True
     )
-
+    
     sigmoid_fwd_providers, sigmoid_fwd_times_data = load_csv_data(
-        os.path.join(results_dir, "sigmoid_attn_fwd.csv"), exclude_kv=False
+        os.path.join(results_dir, 'sigmoid_attn_fwd.csv'),
+        exclude_kv=False
     )
-
+    
     sigmoid_bwd_providers, sigmoid_bwd_times_data = load_csv_data(
-        os.path.join(results_dir, "sigmoid_attn_bwd.csv"), exclude_kv=True
+        os.path.join(results_dir, 'sigmoid_attn_bwd.csv'),
+        exclude_kv=True
     )
-
+    
     relu_fwd_providers, relu_fwd_times_data = load_csv_data(
-        os.path.join(results_dir, "vit_fwd.csv"), exclude_kv=False
+        os.path.join(results_dir, 'vit_fwd.csv'),
+        exclude_kv=False
     )
-
+    
     relu_bwd_providers, relu_bwd_times_data = load_csv_data(
-        os.path.join(results_dir, "vit_bwd.csv"), exclude_kv=True
+        os.path.join(results_dir, 'vit_bwd.csv'),
+        exclude_kv=True
     )
-
+    
     retnet_fwd_providers, retnet_fwd_times_data = load_csv_data(
-        os.path.join(results_dir, "retnet_fwd.csv"), exclude_kv=False
+        os.path.join(results_dir, 'retnet_fwd.csv'),
+        exclude_kv=False
     )
-
+    
     retnet_bwd_providers, retnet_bwd_times_data = load_csv_data(
-        os.path.join(results_dir, "retnet_recur_bwd.csv"), exclude_kv=True
+        os.path.join(results_dir, 'retnet_recur_bwd.csv'),
+        exclude_kv=True
     )
-
+    
     mamba_fwd_providers, mamba_fwd_times_data = load_csv_data(
-        os.path.join(results_dir, "mamba2_fwd.csv"), exclude_kv=False
+        os.path.join(results_dir, 'mamba2_fwd.csv'),
+        exclude_kv=False
     )
-
+    
     mamba_bwd_providers, mamba_bwd_times_data = load_csv_data(
-        os.path.join(results_dir, "mamba2_bwd.csv"), exclude_kv=True
+        os.path.join(results_dir, 'mamba2_bwd.csv'),
+        exclude_kv=True
     )
-
+    
     gla_fwd_providers, gla_fwd_times_data = load_csv_data(
-        os.path.join(results_dir, "rfa_fwd.csv"), exclude_kv=False
+        os.path.join(results_dir, 'rfa_fwd.csv'),
+        exclude_kv=False
     )
-
+    
     gla_bwd_providers, gla_bwd_times_data = load_csv_data(
-        os.path.join(results_dir, "rfa_bwd.csv"), exclude_kv=True
+        os.path.join(results_dir, 'rfa_bwd.csv'),
+        exclude_kv=True
     )
-
+    
     gated_retnet_fwd_providers, gated_retnet_fwd_times_data = load_csv_data(
-        os.path.join(results_dir, "yoco_fwd.csv"), exclude_kv=False
+        os.path.join(results_dir, 'yoco_fwd.csv'),
+        exclude_kv=False
     )
-
+    
     gated_retnet_bwd_providers, gated_retnet_bwd_times_data = load_csv_data(
-        os.path.join(results_dir, "yoco_bwd.csv"), exclude_kv=True
+        os.path.join(results_dir, 'yoco_bwd.csv'),
+        exclude_kv=True
     )
-
+    
     retnet_chunk_fwd_providers, retnet_chunk_fwd_times_data = load_csv_data(
-        os.path.join(results_dir, "retnet_recur_fwd.csv"), exclude_kv=False
+        os.path.join(results_dir, 'retnet_recur_fwd.csv'),
+        exclude_kv=False
     )
-
+    
     retnet_chunk_bwd_providers, retnet_chunk_bwd_times_data = load_csv_data(
-        os.path.join(results_dir, "retnet_recur_bwd.csv"), exclude_kv=True
+        os.path.join(results_dir, 'retnet_recur_bwd.csv'),
+        exclude_kv=True
     )
-
+    
     mla_decode_fwd_providers, mla_decode_fwd_times_data = load_csv_data(
-        os.path.join(results_dir, "mla_fwd.csv"), exclude_kv=False
+        os.path.join(results_dir, 'mla_fwd.csv'),
+        exclude_kv=False
     )
-
+    
     sparse_gqa_decode_fwd_providers, sparse_gqa_decode_fwd_times_data = load_csv_data(
-        os.path.join(results_dir, "sparse_gqa_fwd.csv"), exclude_kv=False
+        os.path.join(results_dir, 'sparse_gqa_fwd.csv'),
+        exclude_kv=False
     )
-
+    
     def combine(A, B):
         new_data = []
         names = []
@@ -176,15 +202,15 @@ def plot_figure11(results_dir, output_path="figure11_h100.pdf"):
 
     fig = plt.figure(figsize=(15, 13))  # 宽度为12英寸，高度为10英寸
     # 设置网格布局
-    gs = gridspec.GridSpec(
-        6, 12, figure=fig, height_ratios=[1, 1, 1, 1, 1, 1], wspace=0.3, hspace=0.9
-    )
+    gs = gridspec.GridSpec(6, 12, figure=fig, height_ratios=[1, 1, 1, 1, 1, 1], wspace=0.3, hspace=0.9)
 
     hatch_patterns = ["-", "+", "x", "\\", "*", "o", "O", ".", "||", "//", "..."]
 
     legend_items = {}
 
+    llm_legands = []
     other_legands = []
+
 
     def get_legend_item(label):
         if label not in legend_items:
@@ -195,9 +221,8 @@ def plot_figure11(results_dir, output_path="figure11_h100.pdf"):
             )
         return legend_items[label]
 
-    gs_llama = gridspec.GridSpecFromSubplotSpec(
-        3, 1, subplot_spec=gs[0, 0:12], hspace=0.25
-    )
+
+    gs_llama = gridspec.GridSpecFromSubplotSpec(3, 1, subplot_spec=gs[0, 0:12], hspace=0.25)
     ax0_2 = fig.add_subplot(gs_llama[0])
     ax0_1 = fig.add_subplot(gs_llama[1:])
     ax0_2.set_ylim(4, 13)
@@ -255,13 +280,13 @@ def plot_figure11(results_dir, output_path="figure11_h100.pdf"):
         )
 
     ax0_1.plot(
-        [2 / 3 - 1 / 64, 2 / 3 - 1 / 64],
+        [2/3 - 1/64, 2/3 - 1/64],
         [1.5, -0.85],
-        color="black",
-        linestyle="dashed",
+        color='black',
+        linestyle='dashed',
         linewidth=1.5,
-        transform=ax0_1.transAxes,  # 使用 Axes 坐标
-        clip_on=False,  # 绘制范围可以超出 Axes
+        transform=ax0_1.transAxes,   # 使用 Axes 坐标
+        clip_on=False             # 绘制范围可以超出 Axes
     )
 
     ax0_1.text(
@@ -290,13 +315,13 @@ def plot_figure11(results_dir, output_path="figure11_h100.pdf"):
     ax0_1.plot((1 - d, 1 + d), (1 - d, 1 + d), **kwargs)  # bottom-left diagonal
     ax0_1.plot((-d, +d), (1 - d, 1 + d), **kwargs)  # bottom-right diagonal
 
+
     ax0_1.set_xticks(x + len(norm_time_data) * bar_width / 2)
     ax0_1.set_xticklabels(providers, fontsize=9)
     ax0_1.grid(False)
 
-    gs_llama = gridspec.GridSpecFromSubplotSpec(
-        3, 1, subplot_spec=gs[1, 0:7], hspace=0.25
-    )
+
+    gs_llama = gridspec.GridSpecFromSubplotSpec(3, 1, subplot_spec=gs[1, 0:7], hspace=0.25)
     ax1_2 = fig.add_subplot(gs_llama[0])
     ax1_1 = fig.add_subplot(gs_llama[1:])
     ax1_2.set_ylim(3, 14)  # 上面的图为10到最大值
@@ -321,9 +346,9 @@ def plot_figure11(results_dir, output_path="figure11_h100.pdf"):
         norm_time_data.append((label, norm_time))
     print(norm_time_data)
     x = np.arange(len(providers))
-    bar_width = 0.14
+    bar_width =0.14
     ax1_1.axhline(y=1, color="black", linestyle="dashed")
-    for i, (label, norm_time) in enumerate(norm_time_data):
+    for i, (label, norm_time) in enumerate(norm_time_data):   
         rec = ax1_2.bar(
             x + i * bar_width,
             norm_time,
@@ -346,14 +371,15 @@ def plot_figure11(results_dir, output_path="figure11_h100.pdf"):
             color=get_legend_item(label)[0],
         )
 
+
     ax1_1.plot(
         [0.502, 0.502],
         [1.5, -0.85],
-        color="black",
-        linestyle="dashed",
+        color='black',
+        linestyle='dashed',
         linewidth=1.5,
-        transform=ax1_1.transAxes,  # 使用 Axes 坐标
-        clip_on=False,  # 绘制范围可以超出 Axes
+        transform=ax1_1.transAxes,   # 使用 Axes 坐标
+        clip_on=False             # 绘制范围可以超出 Axes
     )
 
     ax1_1.text(
@@ -379,6 +405,7 @@ def plot_figure11(results_dir, output_path="figure11_h100.pdf"):
     ax1_2.plot((1 - d, 1 + d), (-d, +d), **kwargs)  # top-left diagonal
     ax1_2.plot((-d, +d), (-d, +d), **kwargs)  # top-right diagonal
 
+
     kwargs.update(transform=ax1_1.transAxes)  # switch to the bottom axes
     ax1_1.plot((1 - d, 1 + d), (1 - d, 1 + d), **kwargs)  # bottom-left diagonal
     ax1_1.plot((-d, +d), (1 - d, 1 + d), **kwargs)  # bottom-right diagonal
@@ -390,9 +417,7 @@ def plot_figure11(results_dir, output_path="figure11_h100.pdf"):
     ax1_1.set_xticks(x + len(norm_time_data) * bar_width / 2)
     ax1_1.set_xticklabels(providers, fontsize=10)
 
-    gs_llama = gridspec.GridSpecFromSubplotSpec(
-        3, 1, subplot_spec=gs[2, 0:8], hspace=0.25
-    )
+    gs_llama = gridspec.GridSpecFromSubplotSpec(3, 1, subplot_spec=gs[2, 0:8], hspace=0.25)
     ax2_2 = fig.add_subplot(gs_llama[0])
     ax2_1 = fig.add_subplot(gs_llama[1:])
     ax2_2.set_ylim(5, 10)  # 上面的图为10到最大值
@@ -438,7 +463,7 @@ def plot_figure11(results_dir, output_path="figure11_h100.pdf"):
             hatch=get_legend_item(label)[1],
             color=get_legend_item(label)[0],
         )
-
+        
         ax2_1.bar(
             x + i * bar_width,
             speedup,
@@ -453,11 +478,11 @@ def plot_figure11(results_dir, output_path="figure11_h100.pdf"):
     ax2_1.plot(
         [0.502, 0.502],
         [1.5, -0.85],
-        color="black",
-        linestyle="dashed",
+        color='black',
+        linestyle='dashed',
         linewidth=1.5,
-        transform=ax2_1.transAxes,  # 使用 Axes 坐标
-        clip_on=False,  # 绘制范围可以超出 Axes
+        transform=ax2_1.transAxes,   # 使用 Axes 坐标
+        clip_on=False             # 绘制范围可以超出 Axes
     )
 
     ax2_1.text(
@@ -483,6 +508,7 @@ def plot_figure11(results_dir, output_path="figure11_h100.pdf"):
     ax2_2.plot((1 - d, 1 + d), (-d, +d), **kwargs)  # top-left diagonal
     ax2_2.plot((-d, +d), (-d, +d), **kwargs)  # top-right diagonal
 
+
     kwargs.update(transform=ax2_1.transAxes)  # switch to the bottom axes
     ax2_1.plot((1 - d, 1 + d), (1 - d, 1 + d), **kwargs)  # bottom-left diagonal
     ax2_1.plot((-d, +d), (1 - d, 1 + d), **kwargs)  # bottom-right diagonal
@@ -492,9 +518,7 @@ def plot_figure11(results_dir, output_path="figure11_h100.pdf"):
     ax2_1.set_xticklabels(providers, fontsize=9)
     ax2_1.grid(False)
 
-    gs_llama = gridspec.GridSpecFromSubplotSpec(
-        3, 1, subplot_spec=gs[3, 0:8], hspace=0.25
-    )
+    gs_llama = gridspec.GridSpecFromSubplotSpec(3, 1, subplot_spec=gs[3, 0:8], hspace=0.25)
     ax3_2 = fig.add_subplot(gs_llama[0])
     ax3_1 = fig.add_subplot(gs_llama[1:])
     ax3_2.set_ylim(4, 12)  # 上面的图为10到最大值
@@ -569,11 +593,11 @@ def plot_figure11(results_dir, output_path="figure11_h100.pdf"):
     ax3_1.plot(
         [0.502, 0.502],
         [1.5, -0.85],
-        color="black",
-        linestyle="dashed",
+        color='black',
+        linestyle='dashed',
         linewidth=1.5,
-        transform=ax3_1.transAxes,  # 使用 Axes 坐标
-        clip_on=False,  # 绘制范围可以超出 Axes
+        transform=ax3_1.transAxes,   # 使用 Axes 坐标
+        clip_on=False             # 绘制范围可以超出 Axes
     )
 
     ax3_1.text(
@@ -607,9 +631,7 @@ def plot_figure11(results_dir, output_path="figure11_h100.pdf"):
     ax3_1.set_xticklabels(providers, fontsize=9)
     ax3_1.grid(False)
 
-    gs_llama = gridspec.GridSpecFromSubplotSpec(
-        3, 1, subplot_spec=gs[3, 8:12], hspace=0.25
-    )
+    gs_llama = gridspec.GridSpecFromSubplotSpec(3, 1, subplot_spec=gs[3, 8:12], hspace=0.25)
     ax4_2 = fig.add_subplot(gs_llama[0])
     ax4_1 = fig.add_subplot(gs_llama[1:])
     ax4_2.set_ylim(3, 10)  # 上面的图为10
@@ -667,7 +689,7 @@ def plot_figure11(results_dir, output_path="figure11_h100.pdf"):
         for rect in rec:
             height = rect.get_height()
             if height == 0:
-                warning_text = "FLA Failed"
+                warning_text = f"FLA Failed"
                 ax4_1.text(
                     rect.get_x() + rect.get_width() / 2 + 0.01,
                     height + 0.05,
@@ -683,11 +705,11 @@ def plot_figure11(results_dir, output_path="figure11_h100.pdf"):
     ax4_1.plot(
         [0.502, 0.502],
         [1.5, -0.85],
-        color="black",
-        linestyle="dashed",
+        color='black',
+        linestyle='dashed',
         linewidth=1.5,
-        transform=ax4_1.transAxes,  # 使用 Axes 坐标
-        clip_on=False,  # 绘制范围可以超出 Axes
+        transform=ax4_1.transAxes,   # 使用 Axes 坐标
+        clip_on=False             # 绘制范围可以超出 Axes
     )
 
     ax4_1.text(
@@ -715,6 +737,7 @@ def plot_figure11(results_dir, output_path="figure11_h100.pdf"):
     kwargs.update(transform=ax4_1.transAxes)  # switch to the bottom axes
     ax4_1.plot((1 - d, 1 + d), (1 - d, 1 + d), **kwargs)  # bottom-left diagonal
     ax4_1.plot((-d, +d), (1 - d, 1 + d), **kwargs)  # bottom-right diagonal
+
 
     # X-axis and labels
     ax4_1.set_xticks(x + len(norm_time_data) * bar_width / 2)
@@ -760,11 +783,11 @@ def plot_figure11(results_dir, output_path="figure11_h100.pdf"):
     ax5.plot(
         [0.502, 0.502],
         [1.0, -0.6],
-        color="black",
-        linestyle="dashed",
+        color='black',
+        linestyle='dashed',
         linewidth=1.5,
-        transform=ax5.transAxes,  # 使用 Axes 坐标
-        clip_on=False,  # 绘制范围可以超出 Axes
+        transform=ax5.transAxes,   # 使用 Axes 坐标
+        clip_on=False             # 绘制范围可以超出 Axes
     )
 
     ax5.text(
@@ -790,9 +813,7 @@ def plot_figure11(results_dir, output_path="figure11_h100.pdf"):
     ax5.set_xticklabels(providers, fontsize=9)
     ax5.grid(False)
 
-    gs_llama = gridspec.GridSpecFromSubplotSpec(
-        3, 1, subplot_spec=gs[4, 0:8], hspace=0.25
-    )
+    gs_llama = gridspec.GridSpecFromSubplotSpec(3, 1, subplot_spec=gs[4, 0:8], hspace=0.25)
     ax6_2 = fig.add_subplot(gs_llama[0])
     ax6_1 = fig.add_subplot(gs_llama[1:])
     ax6_2.set_ylim(6, 18)  # 上面的图为10到最大值
@@ -817,9 +838,9 @@ def plot_figure11(results_dir, output_path="figure11_h100.pdf"):
         norm_time_data.append((label, norm_time))
     print(norm_time_data)
     x = np.arange(len(providers))
-    bar_width = 0.25
+    bar_width =0.25
     ax6_1.axhline(y=1, color="black", linestyle="dashed")
-    for i, (label, norm_time) in enumerate(norm_time_data):
+    for i, (label, norm_time) in enumerate(norm_time_data):   
         rec = ax6_2.bar(
             x + i * bar_width,
             norm_time,
@@ -842,14 +863,15 @@ def plot_figure11(results_dir, output_path="figure11_h100.pdf"):
             color=get_legend_item(label)[0],
         )
 
+
     ax6_1.plot(
         [0.502, 0.502],
         [1.5, -0.85],
-        color="black",
-        linestyle="dashed",
+        color='black',
+        linestyle='dashed',
         linewidth=1.5,
-        transform=ax6_1.transAxes,  # 使用 Axes 坐标
-        clip_on=False,  # 绘制范围可以超出 Axes
+        transform=ax6_1.transAxes,   # 使用 Axes 坐标
+        clip_on=False             # 绘制范围可以超出 Axes
     )
 
     ax6_1.text(
@@ -874,6 +896,7 @@ def plot_figure11(results_dir, output_path="figure11_h100.pdf"):
     kwargs = dict(transform=ax6_2.transAxes, color="k", clip_on=False)
     ax6_2.plot((1 - d, 1 + d), (-d, +d), **kwargs)  # top-left diagonal
     ax6_2.plot((-d, +d), (-d, +d), **kwargs)  # top-right diagonal
+
 
     kwargs.update(transform=ax6_1.transAxes)  # switch to the bottom axes
     ax6_1.plot((1 - d, 1 + d), (1 - d, 1 + d), **kwargs)  # bottom-left diagonal
@@ -925,11 +948,11 @@ def plot_figure11(results_dir, output_path="figure11_h100.pdf"):
     ax7.plot(
         [0.502, 0.502],
         [1.0, -0.6],
-        color="black",
-        linestyle="dashed",
+        color='black',
+        linestyle='dashed',
         linewidth=1.5,
-        transform=ax7.transAxes,  # 使用 Axes 坐标
-        clip_on=False,  # 绘制范围可以超出 Axes
+        transform=ax7.transAxes,   # 使用 Axes 坐标
+        clip_on=False             # 绘制范围可以超出 Axes
     )
 
     ax7.text(
@@ -994,11 +1017,11 @@ def plot_figure11(results_dir, output_path="figure11_h100.pdf"):
     ax8.plot(
         [0.502, 0.502],
         [1.0, -0.6],
-        color="black",
-        linestyle="dashed",
+        color='black',
+        linestyle='dashed',
         linewidth=1.5,
-        transform=ax8.transAxes,  # 使用 Axes 坐标
-        clip_on=False,  # 绘制范围可以超出 Axes
+        transform=ax8.transAxes,   # 使用 Axes 坐标
+        clip_on=False             # 绘制范围可以超出 Axes
     )
 
     ax8.text(
@@ -1063,11 +1086,11 @@ def plot_figure11(results_dir, output_path="figure11_h100.pdf"):
     ax9.plot(
         [0.502, 0.502],
         [1.0, -0.6],
-        color="black",
-        linestyle="dashed",
+        color='black',
+        linestyle='dashed',
         linewidth=1.5,
-        transform=ax9.transAxes,  # 使用 Axes 坐标
-        clip_on=False,  # 绘制范围可以超出 Axes
+        transform=ax9.transAxes,   # 使用 Axes 坐标
+        clip_on=False             # 绘制范围可以超出 Axes
     )
 
     ax9.text(
@@ -1104,7 +1127,7 @@ def plot_figure11(results_dir, output_path="figure11_h100.pdf"):
             t / p_i if p_i != 0 else 0 for p_i, t in zip(_1x_baseline_times, times)
         ]
         norm_time_data.append((label, norm_time))
-
+        
     # Create an array for x-axis positions
     x = np.arange(len(providers))
 
@@ -1127,7 +1150,7 @@ def plot_figure11(results_dir, output_path="figure11_h100.pdf"):
             hatch=get_legend_item(label)[1],
             color=get_legend_item(label)[0],
         )
-
+        
     ax10.text(
         0.52,
         -0.58,
@@ -1136,7 +1159,7 @@ def plot_figure11(results_dir, output_path="figure11_h100.pdf"):
         fontsize=12,
         ha="center",
     )
-
+        
     # X-axis and labels
     ax10.set_xticks(x + len(norm_time_data) * bar_width / 2)
     ax10.set_xticklabels(providers, fontsize=9)
@@ -1153,7 +1176,7 @@ def plot_figure11(results_dir, output_path="figure11_h100.pdf"):
             t / p_i if p_i != 0 else 0 for p_i, t in zip(_1x_baseline_times, times)
         ]
         norm_time_data.append((label, norm_time))
-
+        
     # Create an array for x-axis positions
     x = np.arange(len(providers))
     # Set the width of the bars
@@ -1187,6 +1210,8 @@ def plot_figure11(results_dir, output_path="figure11_h100.pdf"):
     ax11.set_xticks(x + len(norm_time_data) * bar_width / 2)
     ax11.set_xticklabels(providers, fontsize=9)
     ax11.grid(False)
+
+        
 
     legand_font = 14
     ax0_2.text(
@@ -1309,6 +1334,7 @@ def plot_figure11(results_dir, output_path="figure11_h100.pdf"):
         ha="center",
     )
 
+
     y_size = 8
     ax0_1.tick_params(axis="y", labelsize=y_size)  # 设置y轴刻度标签的字体大小
     ax0_2.tick_params(axis="y", labelsize=y_size)  # 设置y轴刻度标签的字体大小
@@ -1337,31 +1363,13 @@ def plot_figure11(results_dir, output_path="figure11_h100.pdf"):
     for ax in axes:
         ax.yaxis.set_major_locator(ticker.MaxNLocator(3))
 
+
     # 为上面六个图添加图例
     handles_other = []
     labels_other = []
     handles_Ladder = []
     labels_Ladder = []
-    for ax in [
-        ax0_1,
-        ax0_2,
-        ax1_1,
-        ax1_2,
-        ax2_1,
-        ax2_2,
-        ax3_1,
-        ax3_2,
-        ax4_1,
-        ax4_2,
-        ax5,
-        ax6_1,
-        ax6_2,
-        ax7,
-        ax8,
-        ax9,
-        ax10,
-        ax11,
-    ]:
+    for ax in [ax0_1, ax0_2, ax1_1, ax1_2, ax2_1, ax2_2, ax3_1, ax3_2, ax4_1, ax4_2, ax5, ax6_1, ax6_2, ax7, ax8, ax9, ax10, ax11]:
         handles, labels = ax.get_legend_handles_labels()
         for handle, label in zip(handles, labels):
             if label == _1x_baseline:
@@ -1403,7 +1411,7 @@ def plot_figure11(results_dir, output_path="figure11_h100.pdf"):
         output_path,
         bbox_inches="tight",
     )
-
+    
 
 if __name__ == "__main__":
     RESULTS_DIR = "/AttentionEngine/results_20251124"

@@ -1,7 +1,6 @@
 # Copyright (c) 2023, Tri Dao.
 
 from typing import Optional, Union
-import ctypes
 
 import torch
 import torch.nn as nn
@@ -19,10 +18,6 @@ import warnings
 
 import torch.utils.cpp_extension
 from torch.utils.cpp_extension import CUDA_HOME
-
-# Hopper kernels call CUDA Driver API symbols directly. Python extensions are
-# loaded with RTLD_LOCAL, so make the driver symbols globally visible first.
-ctypes.CDLL("libcuda.so.1", mode=ctypes.RTLD_GLOBAL)
 
 
 include_path = [

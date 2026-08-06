@@ -3,58 +3,62 @@ from plot_utils import load_csv_data
 import matplotlib.pyplot as plt
 import matplotlib.gridspec as gridspec
 import numpy as np
+import matplotlib.ticker as ticker
+import argparse
+from matplotlib.ticker import MultipleLocator
 import os
 
 
-colormap = plt.cm.Set2  # LinearSegmentedColormap
+colormap = plt.cm.Set2# LinearSegmentedColormap
 
 
 def plot_figure14(results_dir, output_path="figure14_mi250.pdf"):
-
+    
     deepseek_fwd_providers, deepseek_fwd_times_data = load_csv_data(
         os.path.join(results_dir, "deepseek_fwd.csv"),
         exclude_kv=False,
     )
-
+    
     deepseek_bwd_providers, deepseek_bwd_times_data = load_csv_data(
         os.path.join(results_dir, "deepseek_bwd.csv"),
         exclude_kv=True,
     )
-
+    
     reluattn_fwd_providers, reluattn_fwd_times_data = load_csv_data(
         os.path.join(results_dir, "vit_fwd.csv"),
         exclude_kv=False,
     )
-
+    
     reluattn_bwd_providers, reluattn_bwd_times_data = load_csv_data(
         os.path.join(results_dir, "vit_bwd.csv"),
         exclude_kv=True,
     )
-
+     
     mamba2_fwd_providers, mamba2_fwd_times_data = load_csv_data(
         os.path.join(results_dir, "mamba2_fwd.csv"),
         exclude_kv=False,
     )
-
+    
     mamba2_bwd_providers, mamba2_bwd_times_data = load_csv_data(
         os.path.join(results_dir, "mamba2_bwd.csv"),
         exclude_kv=True,
     )
-
+    
     retnet_chunk_fwd_providers, retnet_chunk_fwd_times_data = load_csv_data(
         os.path.join(results_dir, "retnet_recur_fwd.csv"),
         exclude_kv=False,
     )
-
+    
     retnet_chunk_bwd_providers, retnet_chunk_bwd_times_data = load_csv_data(
         os.path.join(results_dir, "retnet_recur_bwd.csv"),
         exclude_kv=True,
     )
-
+    
     mla_decode_fwd_providers, mla_decode_fwd_times_data = load_csv_data(
         os.path.join(results_dir, "mla_fwd.csv"),
         exclude_kv=False,
     )
+    
 
     def combine(A, B):
         new_data = []
@@ -86,7 +90,7 @@ def plot_figure14(results_dir, output_path="figure14_mi250.pdf"):
             data = a_data + b_data
             new_data.append((name, data))
         return new_data
-
+    
     colers_sets = [
         (130 / 255, 176 / 255, 210 / 255),
         (146 / 255, 94 / 255, 176 / 255),
@@ -117,22 +121,21 @@ def plot_figure14(results_dir, output_path="figure14_mi250.pdf"):
         # (248 / 255, 231 / 255, 210 / 255),
         # (182 / 255, 110 / 255, 151 / 255),
     ]
-
+    
     # 创建一个figure实例
     fig = plt.figure(figsize=(8, 12))
-
+    
     # 获取Torch-Inductor的时间值
     _1x_baseline = "MetaAttention"
-
+    
     # 设置网格布局
-    gs = gridspec.GridSpec(
-        5, 6, figure=fig, height_ratios=[1, 1, 1, 1, 1], wspace=0.3, hspace=0.9
-    )
+    gs = gridspec.GridSpec(5, 6, figure=fig, height_ratios=[1, 1, 1, 1, 1], wspace=0.3, hspace=0.9)
 
     hatch_patterns = ["-", "+", "x", "\\", "*", "o", "O", "."]
-
+    
     legend_items = {}
-
+    
+    llm_legands = []
     other_legands = []
 
     def get_legend_item(label):
@@ -143,7 +146,7 @@ def plot_figure14(results_dir, output_path="figure14_mi250.pdf"):
                 hatch_patterns[idx % len(hatch_patterns)],
             )
         return legend_items[label]
-
+    
     ax0 = fig.add_subplot(gs[0, 0:6])
     providers = deepseek_fwd_providers + deepseek_bwd_providers
     times_data = combine(deepseek_fwd_times_data, deepseek_bwd_times_data)
@@ -158,13 +161,13 @@ def plot_figure14(results_dir, output_path="figure14_mi250.pdf"):
 
     # Create an array for x-axis positions
     x = np.arange(len(providers))
-
+    
     # Set the width of the bars
     bar_width = 0.12
 
     # Draw cublas as a horizontal dashed line
     ax0.axhline(y=1, color="black", linestyle="dashed")
-
+    
     # Create bars using a loop
     for i, (label, speedup) in enumerate(norm_time_data):
         if label not in other_legands:
@@ -182,7 +185,7 @@ def plot_figure14(results_dir, output_path="figure14_mi250.pdf"):
         for rect in rec:
             height = rect.get_height()
             if height == 0:
-                warning_text = "fa2 Failed"
+                warning_text = f"fa2 Failed"
                 ax0.text(
                     rect.get_x() + rect.get_width() / 2 + 0.03,
                     height + 0.05,
@@ -194,16 +197,17 @@ def plot_figure14(results_dir, output_path="figure14_mi250.pdf"):
                     color="red",
                     weight="bold",
                 )
-
+        
+        
     # 画分割线
     ax0.plot(
-        [1 / 2 - 1 / 64, 1 / 2 - 1 / 64],
+        [1/2 - 1/64, 1/2 - 1/64],
         [1.0, -0.6],
-        color="black",
-        linestyle="dashed",
+        color='black',
+        linestyle='dashed',
         linewidth=1.5,
-        transform=ax0.transAxes,  # 使用 Axes 坐标
-        clip_on=False,  # 绘制范围可以超出 Axes
+        transform=ax0.transAxes,   # 使用 Axes 坐标
+        clip_on=False             # 绘制范围可以超出 Axes
     )
 
     # 标fwd,hwd
@@ -215,7 +219,7 @@ def plot_figure14(results_dir, output_path="figure14_mi250.pdf"):
         fontsize=12,
         ha="center",
     )
-
+    
     ax0.text(
         0.75,
         -0.58,
@@ -243,13 +247,13 @@ def plot_figure14(results_dir, output_path="figure14_mi250.pdf"):
 
     # # Create an array for x-axis positions
     # x = np.arange(len(providers))
-
+    
     # # Set the width of the bars
     # bar_width = 0.12
 
     # # Draw cublas as a horizontal dashed line
     # ax1.axhline(y=1, color="black", linestyle="dashed")
-
+    
     # # Create bars using a loop
     # for i, (label, speedup) in enumerate(norm_time_data):
     #     if label not in other_legands:
@@ -264,7 +268,7 @@ def plot_figure14(results_dir, output_path="figure14_mi250.pdf"):
     #         hatch=get_legend_item(label)[1],
     #         color=get_legend_item(label)[0],
     #     )
-
+        
     # # 画分割线
     # ax1.plot(
     #     [1/2 - 1/64, 1/2 - 1/64],
@@ -285,7 +289,7 @@ def plot_figure14(results_dir, output_path="figure14_mi250.pdf"):
     #     fontsize=12,
     #     ha="center",
     # )
-
+    
     # ax1.text(
     #     0.75,
     #     -0.58,
@@ -313,13 +317,13 @@ def plot_figure14(results_dir, output_path="figure14_mi250.pdf"):
 
     # Create an array for x-axis positions
     x = np.arange(len(providers))
-
+    
     # Set the width of the bars
     bar_width = 0.12
 
     # Draw cublas as a horizontal dashed line
     ax2.axhline(y=1, color="black", linestyle="dashed")
-
+    
     # Create bars using a loop
     for i, (label, speedup) in enumerate(norm_time_data):
         if label not in other_legands:
@@ -334,16 +338,16 @@ def plot_figure14(results_dir, output_path="figure14_mi250.pdf"):
             hatch=get_legend_item(label)[1],
             color=get_legend_item(label)[0],
         )
-
+        
     # 画分割线
     ax2.plot(
-        [1 / 2 - 1 / 64, 1 / 2 - 1 / 64],
+        [1/2 - 1/64, 1/2 - 1/64],
         [1.0, -0.6],
-        color="black",
-        linestyle="dashed",
+        color='black',
+        linestyle='dashed',
         linewidth=1.5,
-        transform=ax2.transAxes,  # 使用 Axes 坐标
-        clip_on=False,  # 绘制范围可以超出 Axes
+        transform=ax2.transAxes,   # 使用 Axes 坐标
+        clip_on=False             # 绘制范围可以超出 Axes
     )
 
     # 标fwd,hwd
@@ -355,7 +359,7 @@ def plot_figure14(results_dir, output_path="figure14_mi250.pdf"):
         fontsize=12,
         ha="center",
     )
-
+    
     ax2.text(
         0.75,
         -0.58,
@@ -383,13 +387,13 @@ def plot_figure14(results_dir, output_path="figure14_mi250.pdf"):
 
     # Create an array for x-axis positions
     x = np.arange(len(providers))
-
+    
     # Set the width of the bars
     bar_width = 0.12
 
     # Draw cublas as a horizontal dashed line
     ax3.axhline(y=1, color="black", linestyle="dashed")
-
+    
     # Create bars using a loop
     for i, (label, speedup) in enumerate(norm_time_data):
         if label not in other_legands:
@@ -404,16 +408,16 @@ def plot_figure14(results_dir, output_path="figure14_mi250.pdf"):
             hatch=get_legend_item(label)[1],
             color=get_legend_item(label)[0],
         )
-
+        
     # 画分割线
     ax3.plot(
-        [1 / 2 - 1 / 64, 1 / 2 - 1 / 64],
+        [1/2 - 1/64, 1/2 - 1/64],
         [1.0, -0.6],
-        color="black",
-        linestyle="dashed",
+        color='black',
+        linestyle='dashed',
         linewidth=1.5,
-        transform=ax3.transAxes,  # 使用 Axes 坐标
-        clip_on=False,  # 绘制范围可以超出 Axes
+        transform=ax3.transAxes,   # 使用 Axes 坐标
+        clip_on=False             # 绘制范围可以超出 Axes
     )
 
     # 标fwd,hwd
@@ -425,7 +429,7 @@ def plot_figure14(results_dir, output_path="figure14_mi250.pdf"):
         fontsize=12,
         ha="center",
     )
-
+    
     ax3.text(
         0.75,
         -0.58,
@@ -453,13 +457,13 @@ def plot_figure14(results_dir, output_path="figure14_mi250.pdf"):
 
     # Create an array for x-axis positions
     x = np.arange(len(providers))
-
+    
     # Set the width of the bars
     bar_width = 0.12
 
     # Draw cublas as a horizontal dashed line
     ax4.axhline(y=1, color="black", linestyle="dashed")
-
+    
     # Create bars using a loop
     for i, (label, speedup) in enumerate(norm_time_data):
         if label not in other_legands:
@@ -474,16 +478,16 @@ def plot_figure14(results_dir, output_path="figure14_mi250.pdf"):
             hatch=get_legend_item(label)[1],
             color=get_legend_item(label)[0],
         )
-
+        
     # 画分割线
     ax4.plot(
-        [1 / 2 - 1 / 64, 1 / 2 - 1 / 64],
+        [1/2 - 1/64, 1/2 - 1/64],
         [1.0, -0.6],
-        color="black",
-        linestyle="dashed",
+        color='black',
+        linestyle='dashed',
         linewidth=1.5,
-        transform=ax4.transAxes,  # 使用 Axes 坐标
-        clip_on=False,  # 绘制范围可以超出 Axes
+        transform=ax4.transAxes,   # 使用 Axes 坐标
+        clip_on=False             # 绘制范围可以超出 Axes
     )
 
     # 标fwd,hwd
@@ -495,7 +499,7 @@ def plot_figure14(results_dir, output_path="figure14_mi250.pdf"):
         fontsize=12,
         ha="center",
     )
-
+    
     ax4.text(
         0.75,
         -0.58,
@@ -509,11 +513,9 @@ def plot_figure14(results_dir, output_path="figure14_mi250.pdf"):
     ax4.set_xticklabels(providers, fontsize=9)
     ax4.grid(False)
 
-    gs_llama = gridspec.GridSpecFromSubplotSpec(
-        3, 40, subplot_spec=gs[3, 4:6], hspace=0.25
-    )  # 20: 为了空一些
-    ax5_2 = fig.add_subplot(gs_llama[0, 1:])
-    ax5_1 = fig.add_subplot(gs_llama[1:, 1:])
+    gs_llama = gridspec.GridSpecFromSubplotSpec(3, 40, subplot_spec=gs[3, 4:6], hspace=0.25) # 20: 为了空一些
+    ax5_2 = fig.add_subplot(gs_llama[0,1:])
+    ax5_1 = fig.add_subplot(gs_llama[1:,1:])
     ax5_2.set_ylim(100, 150)  # 上面的图为10到最大值
     ax5_1.set_ylim(0, 12.0)  # 下面的图为0到5
     ax5_2.axhline(y=1, color="black", linestyle="dashed")
@@ -564,7 +566,7 @@ def plot_figure14(results_dir, output_path="figure14_mi250.pdf"):
             hatch=get_legend_item(label)[1],
             color=get_legend_item(label)[0],
         )
-
+        
     ax5_1.text(
         0.5,
         -0.88,
@@ -574,10 +576,12 @@ def plot_figure14(results_dir, output_path="figure14_mi250.pdf"):
         ha="center",
     )
 
+    
     d = 0.01  # 斜线的长度
     kwargs = dict(transform=ax5_2.transAxes, color="k", clip_on=False)
     ax5_2.plot((1 - d, 1 + d), (-d, +d), **kwargs)  # top-left diagonal
     ax5_2.plot((-d, +d), (-d, +d), **kwargs)  # top-right diagonal
+
 
     kwargs.update(transform=ax5_1.transAxes)  # switch to the bottom axes
     ax5_1.plot((1 - d, 1 + d), (1 - d, 1 + d), **kwargs)  # bottom-left diagonal
@@ -648,6 +652,7 @@ def plot_figure14(results_dir, output_path="figure14_mi250.pdf"):
         fontweight="bold",
         ha="center",
     )
+        
 
     # 为上面六个图添加图例
     handles_other = []
@@ -673,7 +678,7 @@ def plot_figure14(results_dir, output_path="figure14_mi250.pdf"):
         labels_other,
         loc="upper center",
         bbox_to_anchor=(0.5, 0.980 - 0.06),
-        ncol=len(labels_other) // 2,
+        ncol=len(labels_other)//2,
         fontsize=13,
         frameon=True,
     )
@@ -692,7 +697,6 @@ def plot_figure14(results_dir, output_path="figure14_mi250.pdf"):
         output_path,
         bbox_inches="tight",
     )
-
 
 if __name__ == "__main__":
     RESULTS_DIR = "/cfy/results_mi250_20251123"

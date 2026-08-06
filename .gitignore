@@ -2,7 +2,3 @@ __pycache__
 cache
 *template_output*
 autotuner.log
-*.egg-info/
-.eggs/
-build/
-dist/
