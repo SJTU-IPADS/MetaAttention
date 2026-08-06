@@ -1,6 +1,6 @@
 # MetaAttention
 
-> The PPoPP'26 Artifact Evaluation is available on the [`PPoPP26_AE` branch](https://github.com/SJTU-IPADS/MetaAttention/tree/PPoPP26_AE).
+> The PPoPP'26 Artifact Evaluation is available on the [`PPoPP_AE` branch](https://github.com/SJTU-IPADS/MetaAttention/tree/PPoPP_AE).
 
 ## 0. Overview
 
