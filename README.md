@@ -1,14 +1,12 @@
-# PPoPP'26 MetaAttention Artifact Evaluation
+# MetaAttention
+
+> The PPoPP'26 Artifact Evaluation is available on the [`PPoPP26_AE` branch](https://github.com/SJTU-IPADS/MetaAttention/tree/PPoPP26_AE).
 
 ## 0. Overview
-
-This repository contains the artifacts for the PPoPP'26 Artifact Evaluation of paper #238: "MetaAttention: A Unified and Performant Attention Framework Across Hardware Backends".
 
 MetaAttention provides users with pythonic interface to define customized attention flexibly and automatically generate device code with high performance. Examples of various attention mechanisms (e.g., softmax attention, RetNet, Mamba2, MLA) are provided in the examples/ folder.
 
 # 1. Getting Started Guide
-
-This section covers the supported quickstart paths on the `feat/quickstart` branch.
 
 ## Hardware Requirements
 
@@ -16,8 +14,6 @@ To run generated kernels, you still need a supported GPU runtime:
 
 - 1x NVIDIA Hopper GPU, or
 - 1x AMD MI200 Series GPU
-
-`uv pip install -e .` now works on this branch. The editable install exposes the project packages (`attn_engine`, `core`, `autotuner`, `benchmark`) directly, so local development no longer depends on setting `PYTHONPATH` by hand.
 
 ## Local Quickstart with `uv`
 
@@ -44,56 +40,9 @@ python examples/retention_parallel.py
 
 Expected output includes `AttentionEngine Succuessfully created.`
 
-Notes:
-
-- The example needs a working GPU runtime. On this workstation, the script fails before kernel generation if no NVIDIA driver is present.
-- The editable install was validated by importing `attn_engine`, `core`, `autotuner`, and `benchmark` after `uv pip install --no-deps -e .`.
-
-## Docker Quickstart
-
-Use Docker if you want a reproducible environment with the heavyweight dependencies preinstalled.
-
-### NVIDIA GPU
-
-```bash
-# takes about 50 minutes
-docker build -t metaattn_cuda -f docker/Dockerfile.cu128 .
-
-docker run -it --gpus all --name metaattn-cuda \
-  --ipc=host \
-  --ulimit memlock=-1 \
-  --ulimit stack=67108864 \
-  metaattn_cuda
-```
-
-### AMD GPU
-
-```bash
-# takes about 80 minutes on a 32-core machine
-docker build -t metaattn_rocm -f docker/Dockerfile.rocm .
-
-docker run -it \
-  --device=/dev/kfd \
-  --device=/dev/dri \
-  --group-add video \
-  --ipc=host \
-  --shm-size 8G \
-  --cap-add=SYS_PTRACE \
-  --security-opt seccomp=unconfined \
-  metaattn_rocm
-```
-
-Inside either container, the repository is already installed in editable mode. Run:
-```bash
-cd /workspace/MetaAttention
-python examples/retention_parallel.py
-```
-
-Expected output includes `AttentionEngine Succuessfully created.`
-
 # 2. Step-by-Step Instructions
 
-# Functional tests
+## Functional tests
 
 Run the unified pytest suite from the repository root. The unit suite is CPU-safe and checks imports, code generation, benchmark dispatch, CSV schemas, and PDF plotting without compiling GPU kernels:
 ```bash
@@ -112,7 +61,7 @@ This executes the legacy 10-case parity matrix plus direct-engine and official v
 **Expected output**: all unit tests pass. On a supported GPU, all functional tests run without unconditional skips. Optional baseline warnings do not replace MetaAttention correctness checks.
 
 
-# Performance tests
+## Performance tests
 
 We consider Figure 11 and Figure 14 to be the key results of our paper, demonstrating the performance of MetaAttention-generated operators on hardware.
 The following are the steps to replicate these experiments.
