@@ -2,15 +2,12 @@ import torch
 from typing import Literal, Type
 import functools
 from .graph import *
-from ..utils import IndentedCode
-import functools
-from copy import copy, deepcopy
+from copy import copy
 
 from torch import Tensor
-from typing import Optional, Union, Any
+from typing import Optional
 
 import sympy
-import random
 
 # TODO: support online_func extern_input_tensor
 
@@ -30,6 +27,7 @@ def plus_count(func):
             # else:
             #     print(arg)
         return func(self, *args, **kwargs)
+
     return wrapper
 
 
@@ -37,8 +35,16 @@ class SymbolScalar:
     """
     symbolic scalar/array
     """
-    def __init__(self, varname: str, value: Node, prev=[], shape_idx: list = ["block_M"],
-                 require_grad: bool = True, dtype="float"):
+
+    def __init__(
+        self,
+        varname: str,
+        value: Node,
+        prev=[],
+        shape_idx: list = ["block_M"],
+        require_grad: bool = True,
+        dtype="float",
+    ):
         self.varname = varname
         self.code = value
         self.prev = prev
@@ -54,31 +60,36 @@ class SymbolScalar:
         self.visit_count = 0
 
         self.grad = None  # SymbolicScalar
-        
+
         self.dtype = dtype
-    
+
     def set_allow_reuse(self, allow_reuse: bool):
         """
         set reuse optimization
         """
         self.allow_reuse = allow_reuse
-        
+
     def __repr__(self):
         return f"SymbolScalar({self.varname}, {self.code}, {self.prev}, {self.shape_idx}, {self.require_grad}, {self.dtype})"
 
     @property
     def name(self):
         return self.varname
-    
+
     @property
     def shape(self):
         # cannot use sympy.symbols() because of constant
         shapes = [sympy.simplify(sh_idx) for sh_idx in self.shape_idx]
         return shapes
-    
+
     # @plus_count # TODO: plus count bug
-    def op(self, code: Type[Node], others: list = [],
-           shape_idx: list = None, varname_suffix: str = None):
+    def op(
+        self,
+        code: Type[Node],
+        others: list = [],
+        shape_idx: list = None,
+        varname_suffix: str = None,
+    ):
         """
         op for symbolic scalar
         """
@@ -97,10 +108,8 @@ class SymbolScalar:
         code = code(*[x.code for x in [self] + others])
         # TODO: now must be var+1 not 1+var
         output = self.__class__(
-            f"{output_varname}_{self.count}",
-            code,
-            [self] + others,
-            shape_idx)
+            f"{output_varname}_{self.count}", code, [self] + others, shape_idx
+        )
         self.use_list.append(output)
         self.count += 1
         # print(self.count)
@@ -157,7 +166,7 @@ class SymbolScalar:
                         grad0 = grad0 + self.prev[0].grad
                     self.prev[0].grad = grad0
                 if self.prev[1].require_grad:
-                    grad1 = - grad0 * self.prev[0] / self.prev[1]
+                    grad1 = -grad0 * self.prev[0] / self.prev[1]
                     if self.prev[1].grad:
                         grad1 = grad1 + self.prev[1].grad
                     self.prev[1].grad = grad1
@@ -192,7 +201,8 @@ class SymbolScalar:
                 self.prev[0].grad = grad0
         else:
             raise NotImplementedError(
-                f"backward for {self.code.type} is not implemented")
+                f"backward for {self.code.type} is not implemented"
+            )
         # change shape_idx
         for idx, node in enumerate(self.prev):
             if node.require_grad:
@@ -239,13 +249,13 @@ class SymbolScalar:
 
     def log(self):
         return self.op(Log)
-    
+
     def log2(self):
         return self.op(Log2)
 
     def max(self, other):
         return self.op(Max, [other])
-    
+
     def maxbwd(self, other1, other2):
         return self.op(MaxBwd, [other1, other2])
 
@@ -255,8 +265,13 @@ class SymbolicArray(SymbolScalar):
     2D Array for OnlineFunc.online_fwd
     """
 
-    def __init__(self, varname: str = "", code: Node = Var(" "),
-                 prev=[], shape_idx: list = ["block_M", "block_N"]):
+    def __init__(
+        self,
+        varname: str = "",
+        code: Node = Var(" "),
+        prev=[],
+        shape_idx: list = ["block_M", "block_N"],
+    ):
         super().__init__(varname, code, prev, shape_idx)
 
     def get_reduce(self, op: Literal["sum", "max", "abssum"]):
@@ -266,25 +281,29 @@ class SymbolicArray(SymbolScalar):
         shape_idx = self.shape_idx[:-1]
 
         if op == "sum":
-            return self.op(
-                ReduceSum, shape_idx=shape_idx, varname_suffix="sum")
+            return self.op(ReduceSum, shape_idx=shape_idx, varname_suffix="sum")
         elif op == "max":
-            return self.op(
-                ReduceMax, shape_idx=shape_idx, varname_suffix="max")
+            return self.op(ReduceMax, shape_idx=shape_idx, varname_suffix="max")
         elif op == "abssum":
-            return self.op(
-                ReduceAbsSum, shape_idx=shape_idx, varname_suffix="abssum")
+            return self.op(ReduceAbsSum, shape_idx=shape_idx, varname_suffix="abssum")
         else:
             raise NotImplementedError
+
 
 class SymbolicColReduceArray(SymbolScalar):
     """
     2D Array for OnlineFunc.combine
     """
-    def __init__(self, varname: str = "", code: Node = Var(" "),
-                 prev=[], shape_idx: list = ["block_M", "block_N"]):
+
+    def __init__(
+        self,
+        varname: str = "",
+        code: Node = Var(" "),
+        prev=[],
+        shape_idx: list = ["block_M", "block_N"],
+    ):
         super().__init__(varname, code, prev, shape_idx)
-        
+
     def get_reduce(self, op: Literal["sum", "max", "abssum"]):
         """
         get col reduce result of array
@@ -292,17 +311,17 @@ class SymbolicColReduceArray(SymbolScalar):
         shape_idx = self.shape_idx[:-2] + [self.shape_idx[-1]]
 
         if op == "sum":
-            return self.op(
-                ColReduceSum, shape_idx=shape_idx, varname_suffix="sum")
+            return self.op(ColReduceSum, shape_idx=shape_idx, varname_suffix="sum")
         elif op == "max":
-            return self.op(
-                ColReduceMax, shape_idx=shape_idx, varname_suffix="max")
+            return self.op(ColReduceMax, shape_idx=shape_idx, varname_suffix="max")
         elif op == "abssum":
             return self.op(
-                ColReduceAbsSum, shape_idx=shape_idx, varname_suffix="abssum")
+                ColReduceAbsSum, shape_idx=shape_idx, varname_suffix="abssum"
+            )
         else:
             raise NotImplementedError
-        
+
+
 class SymbolicTensor(SymbolScalar):
     """
     Tensor for CustomIO
@@ -310,9 +329,7 @@ class SymbolicTensor(SymbolScalar):
 
     def __init__(self, varname: str, shape: tuple):
         # convert shape to shape_idx
-        super().__init__(
-            varname, Var(varname), shape_idx=[
-                str(i) for i in shape])
+        super().__init__(varname, Var(varname), shape_idx=[str(i) for i in shape])
         # self.shape = shape
 
 
@@ -324,8 +341,13 @@ class SymbolicConst(SymbolScalar):
     def __init__(self, value):
         # TODO: not float const # str(value)+(".f" if isinstance(value, int)
         # else "f")
-        super().__init__(f"float({str(value)})", Const(value), prev=[], shape_idx=[],
-                         require_grad=False)
+        super().__init__(
+            f"float({str(value)})",
+            Const(value),
+            prev=[],
+            shape_idx=[],
+            require_grad=False,
+        )
 
 
 class CustomIO:
@@ -345,7 +367,9 @@ class CustomIO:
                 result = func(*args, **kwargs)
 
                 return result
+
             return wrapper
+
         return decorator
 
 
@@ -385,7 +409,7 @@ def create_mask(
     #     mask_mod = _vmap_for_bhqkv(mask_mod, prefix=())
     #     mask = mask_mod(b, h, m, n)
     #     return mask
-    
+
     dimensions = [
         (None, None, None, 0),
         (None, None, 0, None),
@@ -397,15 +421,19 @@ def create_mask(
     mask = mod_fn(b, h, m, n)
     return mask
 
+
 _DEFAULT_SPARSE_BLOCK_SIZE = 128
+
 
 def _broadcast_to_dim(x, dim):
     while x.dim() < dim:
         x = x.unsqueeze(0)
     return x
 
+
 def _round_up_to_multiple(x, multiple):
     return (x + multiple - 1) // multiple * multiple
+
 
 def _convert_mask_to_block_mask(
     mask: torch.Tensor,
@@ -452,10 +480,11 @@ def _convert_mask_to_block_mask(
         partial_blocks = partial_blocks.to(dtype=torch.int8)
         return partial_blocks, None
 
+
 def is_causal_mask(mask_tensor, block_M, block_N):
     """
     mask_tensor: (B,H,seqlen//BLOCKM,seqlen//BLOCKN)
-    
+
     return:
     True: mask_tensor is a causal mask
     False: mask_tensor is not a causal mask
@@ -463,16 +492,17 @@ def is_causal_mask(mask_tensor, block_M, block_N):
     # 获取张量的形状
     B, H, M, N = mask_tensor.shape
     q_idx = torch.arange(M).unsqueeze(-1)  # 创建一个列向量
-    kv_idx = torch.arange(N).view(1,-1)  # 创建一个行向量
+    kv_idx = torch.arange(N).view(1, -1)  # 创建一个行向量
     # 创建一个下三角掩码
-    mask = (q_idx+1)*block_M > kv_idx*block_N
+    mask = (q_idx + 1) * block_M > kv_idx * block_N
     # 判断是否相等
     return torch.all(mask_tensor.bool() == mask.to(mask_tensor.device))
+
 
 def is_less_causal_mask(mask_tensor, block_M, block_N):
     """
     mask_tensor: (B,H,seqlen//BLOCKM,seqlen//BLOCKN)
-    
+
     return:
     True: mask_tensor is a less causal mask
     False: mask_tensor is not a less causal mask
@@ -480,16 +510,20 @@ def is_less_causal_mask(mask_tensor, block_M, block_N):
     # 获取张量的形状
     B, H, M, N = mask_tensor.shape
     q_idx = torch.arange(M).unsqueeze(-1)  # 创建一个列向量
-    kv_idx = torch.arange(N).view(1,-1)  # 创建一个行向量
+    kv_idx = torch.arange(N).view(1, -1)  # 创建一个行向量
     # 创建一个上三角掩码
-    mask = (q_idx+1)*block_M-1 < (kv_idx)*block_N
-    filter_tensor = mask_tensor[...,mask]
+    mask = (q_idx + 1) * block_M - 1 < (kv_idx) * block_N
+    filter_tensor = mask_tensor[..., mask]
     is_all_zero = torch.all(filter_tensor == 0)
     return is_all_zero
 
 
 BLOCK_SIZE = 128
-def create_block_mask(mask_mod, B, H, QLen, KVLen, device, Q_BLOCK_SIZE=None, KV_BLOCK_SIZE=None):
+
+
+def create_block_mask(
+    mask_mod, B, H, QLen, KVLen, device, Q_BLOCK_SIZE=None, KV_BLOCK_SIZE=None
+):
     if Q_BLOCK_SIZE is None:
         Q_BLOCK_SIZE = BLOCK_SIZE
     if KV_BLOCK_SIZE is None:
@@ -502,11 +536,16 @@ def create_block_mask(mask_mod, B, H, QLen, KVLen, device, Q_BLOCK_SIZE=None, KV
         separate_full_blocks=False,
     )
     # TODO: sparse block
-    
+
     return partial_block_mask
 
-def create_block_idx(mask_mod, B, H, QLen, KVLen, device, Q_BLOCK_SIZE=None, KV_BLOCK_SIZE=None):
-    block_mask = create_block_mask(mask_mod, B, H, QLen, KVLen, device, Q_BLOCK_SIZE, KV_BLOCK_SIZE)
+
+def create_block_idx(
+    mask_mod, B, H, QLen, KVLen, device, Q_BLOCK_SIZE=None, KV_BLOCK_SIZE=None
+):
+    block_mask = create_block_mask(
+        mask_mod, B, H, QLen, KVLen, device, Q_BLOCK_SIZE, KV_BLOCK_SIZE
+    )
     block_idx = torch.nonzero(block_mask, as_tuple=False)
     # TODO
     return block_idx

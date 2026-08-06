@@ -7,9 +7,6 @@ import itertools
 from tilelang.profiler import cached
 
 # TL_GLOBAL_FUNC = """
-def fast_tanh(A, B):
-    return T.call_extern("handle", "fasttanh", T.address_of(A), T.address_of(B))
-
 def make_dq_layout(dQ):
     # atomicAdd can not be vectorized, so we need to reorder dq to match the 8x8 gemm fragment
     return T.Layout(
@@ -52,7 +49,7 @@ def kernel(batch, heads, groups, seqlen_kv, dim, dimv, tune=False):
          # TODO
         # @T.macro
         # def score_mod(
-        #     # scores: T.Buffer([block_M, block_N], accum_dtype),
+        #     # scores: T.Tensor([block_M, block_N], accum_dtype),
         #     {#{score_mod_inputs | indent(12)}#}
         #     ):
         #     {#{score_mod_body | indent(12)}#}
@@ -60,7 +57,7 @@ def kernel(batch, heads, groups, seqlen_kv, dim, dimv, tune=False):
         
         # @T.macro
         # def online_func(
-        #     # scores: T.Buffer([block_M, block_N], accum_dtype),
+        #     # scores: T.Tensor([block_M, block_N], accum_dtype),
         #     {#{online_func_inputs | indent(12)}#}
         # ):
         #     {#{online_func_body | indent(12)}#}
@@ -68,13 +65,13 @@ def kernel(batch, heads, groups, seqlen_kv, dim, dimv, tune=False):
 
         @T.macro
         def flash_attn(
-                Q: T.Buffer(shape_q, dtype),
-                K: T.Buffer(shape_k, dtype),
-                V: T.Buffer(shape_v, dtype),
+                Q: T.Tensor(shape_q, dtype),
+                K: T.Tensor(shape_k, dtype),
+                V: T.Tensor(shape_v, dtype),
                 {{custom_fwd_inputs | indent(8)}}
                 
-                mask: T.Buffer([batch, groups, 1, seqlen_kv], "uint8"),
-                Output: T.Buffer([batch, heads, dimv], dtype),
+                mask: T.Tensor([batch, groups, 1, seqlen_kv], "uint8"),
+                Output: T.Tensor([batch, heads, dimv], dtype),
                 # {#{final_rowscales_output | indent(8)}#}
         ):
             with T.Kernel(
@@ -140,12 +137,12 @@ def kernel(batch, heads, groups, seqlen_kv, dim, dimv, tune=False):
 
         @T.macro
         def flash_attn_split(
-                Q: T.Buffer(shape_q, dtype),
-                K: T.Buffer(shape_k, dtype),
-                V: T.Buffer(shape_v, dtype),
-                mask: T.Buffer([batch, groups, 1, seqlen_kv], "uint8"),
-                glse: T.Buffer([batch, heads, num_split], dtype),
-                Output_partial: T.Buffer(part_shape, dtype),
+                Q: T.Tensor(shape_q, dtype),
+                K: T.Tensor(shape_k, dtype),
+                V: T.Tensor(shape_v, dtype),
+                mask: T.Tensor([batch, groups, 1, seqlen_kv], "uint8"),
+                glse: T.Tensor([batch, heads, num_split], dtype),
+                Output_partial: T.Tensor(part_shape, dtype),
         ):
             with T.Kernel(
                     batch, heads // valid_block_H, num_split, threads=threads) as (bx, by, bz):
@@ -267,26 +264,26 @@ def kernel(batch, heads, groups, seqlen_kv, dim, dimv, tune=False):
 
         @T.prim_func
         def main_split(
-                Q: T.Buffer(shape_q, dtype),
-                K: T.Buffer(shape_k, dtype),
-                V: T.Buffer(shape_v, dtype),
-                mask: T.Buffer([batch, groups, 1, seqlen_kv], "uint8"),
-                glse: T.Buffer([batch, heads, num_split], dtype),
-                Output_partial: T.Buffer(part_shape, dtype),
-                Output: T.Buffer(shape_o, dtype),
+                Q: T.Tensor(shape_q, dtype),
+                K: T.Tensor(shape_k, dtype),
+                V: T.Tensor(shape_v, dtype),
+                mask: T.Tensor([batch, groups, 1, seqlen_kv], "uint8"),
+                glse: T.Tensor([batch, heads, num_split], dtype),
+                Output_partial: T.Tensor(part_shape, dtype),
+                Output: T.Tensor(shape_o, dtype),
         ):
             flash_attn_split(Q, K, V, mask, glse, Output_partial)
             combine(glse, Output_partial, Output)
 
         @T.prim_func
         def main_no_split(
-                Q: T.Buffer(shape_q, dtype),
-                K: T.Buffer(shape_k, dtype),
-                V: T.Buffer(shape_v, dtype),
-                mask: T.Buffer([batch, groups, 1, seqlen_kv], "uint8"),
-                glse: T.Buffer([batch, heads, num_split], dtype),
-                Output_partial: T.Buffer(part_shape, dtype),
-                Output: T.Buffer(shape_o, dtype),
+                Q: T.Tensor(shape_q, dtype),
+                K: T.Tensor(shape_k, dtype),
+                V: T.Tensor(shape_v, dtype),
+                mask: T.Tensor([batch, groups, 1, seqlen_kv], "uint8"),
+                glse: T.Tensor([batch, heads, num_split], dtype),
+                Output_partial: T.Tensor(part_shape, dtype),
+                Output: T.Tensor(shape_o, dtype),
         ):
             flash_attn(Q, K, V, mask, Output)
 

@@ -1,11 +1,9 @@
 import pytest
 from einops import rearrange, repeat
 import torch
-import flash_attn
 import flash_attn_interface
-import itertools
 import math
-import time
+
 
 def construct_local_mask(
     seqlen_q,
@@ -16,7 +14,9 @@ def construct_local_mask(
     device=None,
     key_leftpad=None,
 ):
-    row_idx = rearrange(torch.arange(seqlen_q, device=device, dtype=torch.long), "s -> s 1")
+    row_idx = rearrange(
+        torch.arange(seqlen_q, device=device, dtype=torch.long), "s -> s 1"
+    )
     col_idx = torch.arange(seqlen_k, device=device, dtype=torch.long)
     if key_leftpad is not None:
         key_leftpad = rearrange(key_leftpad, "b -> b 1 1 1")
@@ -97,7 +97,9 @@ def attention_ref(
         scores = scores.tanh()
         scores = scores * softcap
     if key_padding_mask is not None:
-        scores.masked_fill_(rearrange(~key_padding_mask, "b s -> b 1 1 s"), float("-inf"))
+        scores.masked_fill_(
+            rearrange(~key_padding_mask, "b s -> b 1 1 s"), float("-inf")
+        )
     if window_size[0] >= 0 or window_size[1] >= 0:
         local_mask = construct_local_mask(
             seqlen_q,
@@ -114,11 +116,15 @@ def attention_ref(
     attention = torch.softmax(scores, dim=-1).to(v.dtype)
     # Some rows might be completely masked out so we fill them with zero instead of NaN
     if window_size[0] >= 0 or window_size[1] >= 0:
-        attention = attention.masked_fill(torch.all(local_mask, dim=-1, keepdim=True), 0.0)
+        attention = attention.masked_fill(
+            torch.all(local_mask, dim=-1, keepdim=True), 0.0
+        )
     # We want to mask here so that the attention matrix doesn't have any NaNs
     # Otherwise we'll get NaN in dV
     if query_padding_mask is not None:
-        attention = attention.masked_fill(rearrange(~query_padding_mask, "b s -> b 1 s 1"), 0.0)
+        attention = attention.masked_fill(
+            rearrange(~query_padding_mask, "b s -> b 1 s 1"), 0.0
+        )
     dropout_scaling = 1.0 / (1 - dropout_p)
     # attention_drop = attention.masked_fill(~dropout_mask, 0.0) * dropout_scaling
     # output = torch.einsum('bhts,bshd->bthd', attention_drop , v)
@@ -152,21 +158,39 @@ def attention_ref(
         (8, 2),
     ],
 )
-def test_flash_attn_kvcache_nosplit(nheads_kv, gqa_ratio, num_requests, query_seqlen, context_seqlen, headdim, causal, gqa_parallel):
-    device = "cuda"
+def test_flash_attn_kvcache_nosplit(
+    nheads_kv,
+    gqa_ratio,
+    num_requests,
+    query_seqlen,
+    context_seqlen,
+    headdim,
+    causal,
+    gqa_parallel,
+):
     num_caches = num_requests
     cache_seqlen = context_seqlen
     nheads_q = nheads_kv * gqa_ratio
 
     k_cache = torch.randn(
-        (num_caches, cache_seqlen, nheads_kv, headdim), device="cuda", dtype=torch.bfloat16
+        (num_caches, cache_seqlen, nheads_kv, headdim),
+        device="cuda",
+        dtype=torch.bfloat16,
     )
     v_cache = torch.randn(
-        (num_caches, cache_seqlen, nheads_kv, headdim), device="cuda", dtype=torch.bfloat16
+        (num_caches, cache_seqlen, nheads_kv, headdim),
+        device="cuda",
+        dtype=torch.bfloat16,
     )
-    q = torch.randn((num_requests, query_seqlen, nheads_q, headdim), device="cuda", dtype=torch.bfloat16)
+    q = torch.randn(
+        (num_requests, query_seqlen, nheads_q, headdim),
+        device="cuda",
+        dtype=torch.bfloat16,
+    )
     # cache_idxs = torch.randperm(num_caches, dtype=torch.int32, device="cuda")[:num_requests]
-    cache_seqlens = torch.tensor([context_seqlen] * num_requests, dtype=torch.int32, device="cuda")
+    cache_seqlens = torch.tensor(
+        [context_seqlen] * num_requests, dtype=torch.int32, device="cuda"
+    )
     torch.cuda.synchronize()
 
     out_ref, _ = attention_ref(
@@ -177,21 +201,20 @@ def test_flash_attn_kvcache_nosplit(nheads_kv, gqa_ratio, num_requests, query_se
     )
 
     out_fa3, lse_fa3 = flash_attn_interface.flash_attn_with_kvcache(
-                    q=q,
-                    k_cache=k_cache,
-                    v_cache=v_cache,
-                    cache_seqlens=cache_seqlens,
-                    # cache_batch_idx=cache_idxs,
-                    causal=causal,
-                    num_splits=1,
-                    return_softmax_lse=True,
-                    gqa_parallel=gqa_parallel
-                )
-
+        q=q,
+        k_cache=k_cache,
+        v_cache=v_cache,
+        cache_seqlens=cache_seqlens,
+        # cache_batch_idx=cache_idxs,
+        causal=causal,
+        num_splits=1,
+        return_softmax_lse=True,
+        gqa_parallel=gqa_parallel,
+    )
 
     torch.cuda.synchronize()
-    assert ((out_ref - out_fa3).abs().max().item() <= 4e-3)
-    assert ((out_ref - out_fa3).abs().mean().item() <= 2e-4)
+    assert (out_ref - out_fa3).abs().max().item() <= 4e-3
+    assert (out_ref - out_fa3).abs().mean().item() <= 2e-4
 
 
 @pytest.mark.parametrize("causal", [True, False])
@@ -214,24 +237,42 @@ def test_flash_attn_kvcache_nosplit(nheads_kv, gqa_ratio, num_requests, query_se
         (8, 2),
     ],
 )
-def test_flash_attn_kvcache_nosplit_fp8(nheads_kv, gqa_ratio, num_requests, query_seqlen, context_seqlen, headdim, causal, gqa_parallel):
-    device = "cuda"
+def test_flash_attn_kvcache_nosplit_fp8(
+    nheads_kv,
+    gqa_ratio,
+    num_requests,
+    query_seqlen,
+    context_seqlen,
+    headdim,
+    causal,
+    gqa_parallel,
+):
     num_caches = num_requests
     cache_seqlen = context_seqlen
     nheads_q = nheads_kv * gqa_ratio
 
     k_cache = torch.randn(
-        (num_caches, cache_seqlen, nheads_kv, headdim), device="cuda", dtype=torch.bfloat16
+        (num_caches, cache_seqlen, nheads_kv, headdim),
+        device="cuda",
+        dtype=torch.bfloat16,
     )
     v_cache = torch.randn(
-        (num_caches, cache_seqlen, nheads_kv, headdim), device="cuda", dtype=torch.bfloat16
+        (num_caches, cache_seqlen, nheads_kv, headdim),
+        device="cuda",
+        dtype=torch.bfloat16,
     )
-    q = torch.randn((num_requests, query_seqlen, nheads_q, headdim), device="cuda", dtype=torch.bfloat16)
+    q = torch.randn(
+        (num_requests, query_seqlen, nheads_q, headdim),
+        device="cuda",
+        dtype=torch.bfloat16,
+    )
     q = q.to(torch.float8_e4m3fn)
     k_cache = k_cache.to(torch.float8_e4m3fn)
     v_cache = v_cache.to(torch.float8_e4m3fn)
     # cache_idxs = torch.randperm(num_caches, dtype=torch.int32, device="cuda")[:num_requests]
-    cache_seqlens = torch.tensor([context_seqlen] * num_requests, dtype=torch.int32, device="cuda")
+    cache_seqlens = torch.tensor(
+        [context_seqlen] * num_requests, dtype=torch.int32, device="cuda"
+    )
     torch.cuda.synchronize()
 
     out_ref, _ = attention_ref(
@@ -241,26 +282,28 @@ def test_flash_attn_kvcache_nosplit_fp8(nheads_kv, gqa_ratio, num_requests, quer
         causal=causal,
     )
 
-    descale_q = torch.tensor([1.0], dtype=torch.float32, device='cuda')
-    descale_k = torch.tensor([1.0], dtype=torch.float32, device='cuda')
-    descale_v = torch.tensor([1.0], dtype=torch.float32, device='cuda')
+    descale_q = torch.tensor([1.0], dtype=torch.float32, device="cuda")
+    descale_k = torch.tensor([1.0], dtype=torch.float32, device="cuda")
+    descale_v = torch.tensor([1.0], dtype=torch.float32, device="cuda")
     out_fa3, lse_fa3 = flash_attn_interface.flash_attn_with_kvcache(
-                    q=q,
-                    k_cache=k_cache,
-                    v_cache=v_cache,
-                    cache_seqlens=cache_seqlens,
-                    # cache_batch_idx=cache_idxs,
-                    causal=causal,
-                    num_splits=1,
-                    return_softmax_lse=True,
-                    gqa_parallel=gqa_parallel,
-                    descale_q=descale_q, descale_k=descale_k, descale_v=descale_v
-                )
-
+        q=q,
+        k_cache=k_cache,
+        v_cache=v_cache,
+        cache_seqlens=cache_seqlens,
+        # cache_batch_idx=cache_idxs,
+        causal=causal,
+        num_splits=1,
+        return_softmax_lse=True,
+        gqa_parallel=gqa_parallel,
+        descale_q=descale_q,
+        descale_k=descale_k,
+        descale_v=descale_v,
+    )
 
     torch.cuda.synchronize()
-    assert ((out_ref - out_fa3).abs().max().item() <= 4e-2)
-    assert ((out_ref - out_fa3).abs().mean().item() <= 2e-3)
+    assert (out_ref - out_fa3).abs().max().item() <= 4e-2
+    assert (out_ref - out_fa3).abs().mean().item() <= 2e-3
+
 
 @pytest.mark.parametrize("dtype", [torch.bfloat16])
 @pytest.mark.parametrize("use_heuristic_only", [True])
@@ -289,7 +332,19 @@ def test_flash_attn_kvcache_nosplit_fp8(nheads_kv, gqa_ratio, num_requests, quer
         (1, 32),
     ],
 )
-def test_flash_attn_kvcache_output(nheads_kv, gqa_ratio, num_requests, query_seqlen, context_seqlen, headdim, causal, use_heuristic_only, cache_seqlen_rand, gqa_parallel, dtype):
+def test_flash_attn_kvcache_output(
+    nheads_kv,
+    gqa_ratio,
+    num_requests,
+    query_seqlen,
+    context_seqlen,
+    headdim,
+    causal,
+    use_heuristic_only,
+    cache_seqlen_rand,
+    gqa_parallel,
+    dtype,
+):
     device = "cuda"
     num_caches = 16
     if context_seqlen <= 65536:
@@ -303,70 +358,100 @@ def test_flash_attn_kvcache_output(nheads_kv, gqa_ratio, num_requests, query_seq
         max_splits = 128
 
     k_cache = torch.randn(
-        (num_caches, cache_seqlen, nheads_kv, headdim), device="cuda", dtype=torch.bfloat16
+        (num_caches, cache_seqlen, nheads_kv, headdim),
+        device="cuda",
+        dtype=torch.bfloat16,
     )
     v_cache = torch.randn(
-        (num_caches, cache_seqlen, nheads_kv, headdim), device="cuda", dtype=torch.bfloat16
+        (num_caches, cache_seqlen, nheads_kv, headdim),
+        device="cuda",
+        dtype=torch.bfloat16,
     )
-    q = torch.randn((num_requests, query_seqlen, nheads_q, headdim), device="cuda", dtype=torch.bfloat16)
+    q = torch.randn(
+        (num_requests, query_seqlen, nheads_q, headdim),
+        device="cuda",
+        dtype=torch.bfloat16,
+    )
 
     q = q.to(dtype)
     k_cache = k_cache.to(dtype)
     v_cache = v_cache.to(dtype)
-    cache_idxs = torch.randperm(num_caches, dtype=torch.int32, device="cuda")[:num_requests]
-    cache_seqlens = torch.randint(1, context_seqlen-1, (num_requests,), dtype=torch.int32).to(device) if cache_seqlen_rand else torch.tensor([context_seqlen] * num_requests, dtype=torch.int32, device="cuda")
+    cache_idxs = torch.randperm(num_caches, dtype=torch.int32, device="cuda")[
+        :num_requests
+    ]
+    cache_seqlens = (
+        torch.randint(1, context_seqlen - 1, (num_requests,), dtype=torch.int32).to(
+            device
+        )
+        if cache_seqlen_rand
+        else torch.tensor(
+            [context_seqlen] * num_requests, dtype=torch.int32, device="cuda"
+        )
+    )
     torch.cuda.synchronize()
 
     out_ref, lse_ref = flash_attn_interface.flash_attn_with_kvcache(
-                    q=q,
-                    k_cache=k_cache,
-                    v_cache=v_cache,
-                    cache_seqlens=cache_seqlens,
-                    cache_batch_idx=cache_idxs,
-                    causal=causal,
-                    num_splits=1,
-                    return_softmax_lse=True,
-                    gqa_parallel=False
-                )
+        q=q,
+        k_cache=k_cache,
+        v_cache=v_cache,
+        cache_seqlens=cache_seqlens,
+        cache_batch_idx=cache_idxs,
+        causal=causal,
+        num_splits=1,
+        return_softmax_lse=True,
+        gqa_parallel=False,
+    )
 
     # i=0 case is with num splits heuristic
-    for i in range(0, max_splits+1):
-                out_fa3, lse_fa3 = flash_attn_interface.flash_attn_with_kvcache(
-                    q=q,
-                    k_cache=k_cache,
-                    v_cache=v_cache,
-                    cache_seqlens=cache_seqlens,
-                    cache_batch_idx=cache_idxs,
-                    causal=causal,
-                    num_splits=i,
-                    return_softmax_lse=True,
-                    gqa_parallel=gqa_parallel,
-                    max_seqlen_k_hint=context_seqlen
-                )
+    for i in range(0, max_splits + 1):
+        out_fa3, lse_fa3 = flash_attn_interface.flash_attn_with_kvcache(
+            q=q,
+            k_cache=k_cache,
+            v_cache=v_cache,
+            cache_seqlens=cache_seqlens,
+            cache_batch_idx=cache_idxs,
+            causal=causal,
+            num_splits=i,
+            return_softmax_lse=True,
+            gqa_parallel=gqa_parallel,
+            max_seqlen_k_hint=context_seqlen,
+        )
 
-                torch.cuda.synchronize()
-                print ('output-ref', i, out_ref)
-                print ('output-fa3',i, out_fa3)
-                print ('output-max-diff', i, context_seqlen, (out_ref - out_fa3).abs().max().item())
-                print ('output-mean-diff',i, context_seqlen, (out_ref - out_fa3).abs().mean().item())
-                print ('lse-max-diff',i, context_seqlen, (lse_ref - lse_fa3).abs().max().item())
-                print ('lse-mean-diff',i,  context_seqlen, (lse_ref - lse_fa3).abs().mean().item())
+        torch.cuda.synchronize()
+        print("output-ref", i, out_ref)
+        print("output-fa3", i, out_fa3)
+        print(
+            "output-max-diff", i, context_seqlen, (out_ref - out_fa3).abs().max().item()
+        )
+        print(
+            "output-mean-diff",
+            i,
+            context_seqlen,
+            (out_ref - out_fa3).abs().mean().item(),
+        )
+        print("lse-max-diff", i, context_seqlen, (lse_ref - lse_fa3).abs().max().item())
+        print(
+            "lse-mean-diff", i, context_seqlen, (lse_ref - lse_fa3).abs().mean().item()
+        )
 
-                if cache_seqlen_rand:
-                    assert ((out_ref - out_fa3).abs().max().item() <= 1e-2)
-                    assert ((out_ref - out_fa3).abs().mean().item() <= 1e-3)
-                else:
-                    assert ((out_ref - out_fa3).abs().max().item() <= 2e-3)
-                    assert ((out_ref - out_fa3).abs().mean().item() <= 1e-4)
-                lse_max_ref = lse_ref.abs().max().item()
-                lse_mean_ref = lse_ref.abs().mean().item()
-                lse_max_fa3 = lse_fa3.abs().max().item()
-                lse_mean_fa3 = lse_fa3.abs().mean().item()
-                lse_max_diff = (lse_ref - lse_fa3).abs().max().item()
-                lse_mean_diff = (lse_ref - lse_fa3).abs().mean().item()
-                assert ((lse_max_ref == math.inf and lse_max_fa3 == math.inf) or lse_max_diff <= 1e-3)
-                assert ((lse_mean_ref == math.inf and lse_mean_fa3 == math.inf) or lse_mean_diff <= 1e-4)
-
+        if cache_seqlen_rand:
+            assert (out_ref - out_fa3).abs().max().item() <= 1e-2
+            assert (out_ref - out_fa3).abs().mean().item() <= 1e-3
+        else:
+            assert (out_ref - out_fa3).abs().max().item() <= 2e-3
+            assert (out_ref - out_fa3).abs().mean().item() <= 1e-4
+        lse_max_ref = lse_ref.abs().max().item()
+        lse_mean_ref = lse_ref.abs().mean().item()
+        lse_max_fa3 = lse_fa3.abs().max().item()
+        lse_mean_fa3 = lse_fa3.abs().mean().item()
+        lse_max_diff = (lse_ref - lse_fa3).abs().max().item()
+        lse_mean_diff = (lse_ref - lse_fa3).abs().mean().item()
+        assert (
+            lse_max_ref == math.inf and lse_max_fa3 == math.inf
+        ) or lse_max_diff <= 1e-3
+        assert (
+            lse_mean_ref == math.inf and lse_mean_fa3 == math.inf
+        ) or lse_mean_diff <= 1e-4
 
 
 @pytest.mark.parametrize("dtype", [torch.float8_e4m3fn])
@@ -396,7 +481,19 @@ def test_flash_attn_kvcache_output(nheads_kv, gqa_ratio, num_requests, query_seq
         (1, 32),
     ],
 )
-def test_flash_attn_kvcache_output_fp8(nheads_kv, gqa_ratio, num_requests, query_seqlen, context_seqlen, headdim, causal, use_heuristic_only, cache_seqlen_rand, gqa_parallel, dtype):
+def test_flash_attn_kvcache_output_fp8(
+    nheads_kv,
+    gqa_ratio,
+    num_requests,
+    query_seqlen,
+    context_seqlen,
+    headdim,
+    causal,
+    use_heuristic_only,
+    cache_seqlen_rand,
+    gqa_parallel,
+    dtype,
+):
     device = "cuda"
     num_caches = 16
     if context_seqlen <= 65536:
@@ -410,76 +507,110 @@ def test_flash_attn_kvcache_output_fp8(nheads_kv, gqa_ratio, num_requests, query
         max_splits = 128
 
     k_cache = torch.randn(
-        (num_caches, cache_seqlen, nheads_kv, headdim), device="cuda", dtype=torch.bfloat16
+        (num_caches, cache_seqlen, nheads_kv, headdim),
+        device="cuda",
+        dtype=torch.bfloat16,
     )
     v_cache = torch.randn(
-        (num_caches, cache_seqlen, nheads_kv, headdim), device="cuda", dtype=torch.bfloat16
+        (num_caches, cache_seqlen, nheads_kv, headdim),
+        device="cuda",
+        dtype=torch.bfloat16,
     )
-    q = torch.randn((num_requests, query_seqlen, nheads_q, headdim), device="cuda", dtype=torch.bfloat16)
+    q = torch.randn(
+        (num_requests, query_seqlen, nheads_q, headdim),
+        device="cuda",
+        dtype=torch.bfloat16,
+    )
 
     q = q.to(dtype)
     k_cache = k_cache.to(dtype)
     v_cache = v_cache.to(dtype)
-    cache_idxs = torch.randperm(num_caches, dtype=torch.int32, device="cuda")[:num_requests]
-    cache_seqlens = torch.randint(1, context_seqlen-1, (num_requests,), dtype=torch.int32).to(device) if cache_seqlen_rand else torch.tensor([context_seqlen] * num_requests, dtype=torch.int32, device="cuda")
+    cache_idxs = torch.randperm(num_caches, dtype=torch.int32, device="cuda")[
+        :num_requests
+    ]
+    cache_seqlens = (
+        torch.randint(1, context_seqlen - 1, (num_requests,), dtype=torch.int32).to(
+            device
+        )
+        if cache_seqlen_rand
+        else torch.tensor(
+            [context_seqlen] * num_requests, dtype=torch.int32, device="cuda"
+        )
+    )
     torch.cuda.synchronize()
 
-
-    descale_q = torch.tensor([1.0], dtype=torch.float32, device='cuda')
-    descale_k = torch.tensor([1.0], dtype=torch.float32, device='cuda')
-    descale_v = torch.tensor([1.0], dtype=torch.float32, device='cuda')
+    descale_q = torch.tensor([1.0], dtype=torch.float32, device="cuda")
+    descale_k = torch.tensor([1.0], dtype=torch.float32, device="cuda")
+    descale_v = torch.tensor([1.0], dtype=torch.float32, device="cuda")
 
     out_ref, lse_ref = flash_attn_interface.flash_attn_with_kvcache(
-                    q=q,
-                    k_cache=k_cache,
-                    v_cache=v_cache,
-                    cache_seqlens=cache_seqlens,
-                    cache_batch_idx=cache_idxs,
-                    causal=causal,
-                    num_splits=1,
-                    return_softmax_lse=True,
-                    gqa_parallel=False,
-                    descale_q=descale_q, descale_k=descale_k, descale_v=descale_v
-                )
+        q=q,
+        k_cache=k_cache,
+        v_cache=v_cache,
+        cache_seqlens=cache_seqlens,
+        cache_batch_idx=cache_idxs,
+        causal=causal,
+        num_splits=1,
+        return_softmax_lse=True,
+        gqa_parallel=False,
+        descale_q=descale_q,
+        descale_k=descale_k,
+        descale_v=descale_v,
+    )
 
     # i=0 case is with num splits heuristic
-    for i in range(0, max_splits+1):
-                out_fa3, lse_fa3 = flash_attn_interface.flash_attn_with_kvcache(
-                    q=q,
-                    k_cache=k_cache,
-                    v_cache=v_cache,
-                    cache_seqlens=cache_seqlens,
-                    cache_batch_idx=cache_idxs,
-                    causal=causal,
-                    num_splits=i,
-                    return_softmax_lse=True,
-                    gqa_parallel=gqa_parallel,
-                    max_seqlen_k_hint=context_seqlen,
-                    descale_q=descale_q, descale_k=descale_k, descale_v=descale_v
-                )
+    for i in range(0, max_splits + 1):
+        out_fa3, lse_fa3 = flash_attn_interface.flash_attn_with_kvcache(
+            q=q,
+            k_cache=k_cache,
+            v_cache=v_cache,
+            cache_seqlens=cache_seqlens,
+            cache_batch_idx=cache_idxs,
+            causal=causal,
+            num_splits=i,
+            return_softmax_lse=True,
+            gqa_parallel=gqa_parallel,
+            max_seqlen_k_hint=context_seqlen,
+            descale_q=descale_q,
+            descale_k=descale_k,
+            descale_v=descale_v,
+        )
 
-                torch.cuda.synchronize()
-                print ('output-ref', i, out_ref)
-                print ('output-fa3',i, out_fa3)
-                print ('output-max-diff', i, context_seqlen, (out_ref - out_fa3).abs().max().item())
-                print ('output-mean-diff',i, context_seqlen, (out_ref - out_fa3).abs().mean().item())
-                print ('lse-max-diff',i, context_seqlen, (lse_ref - lse_fa3).abs().max().item())
-                print ('lse-mean-diff',i,  context_seqlen, (lse_ref - lse_fa3).abs().mean().item())
+        torch.cuda.synchronize()
+        print("output-ref", i, out_ref)
+        print("output-fa3", i, out_fa3)
+        print(
+            "output-max-diff", i, context_seqlen, (out_ref - out_fa3).abs().max().item()
+        )
+        print(
+            "output-mean-diff",
+            i,
+            context_seqlen,
+            (out_ref - out_fa3).abs().mean().item(),
+        )
+        print("lse-max-diff", i, context_seqlen, (lse_ref - lse_fa3).abs().max().item())
+        print(
+            "lse-mean-diff", i, context_seqlen, (lse_ref - lse_fa3).abs().mean().item()
+        )
 
-                if cache_seqlen_rand:
-                    assert ((out_ref - out_fa3).abs().max().item() <= 1e-1)
-                    assert ((out_ref - out_fa3).abs().mean().item() <= 1e-2)
-                else:
-                    assert ((out_ref - out_fa3).abs().max().item() <= 2e-2)
-                    assert ((out_ref - out_fa3).abs().mean().item() <= 2e-3)
-                lse_max_ref = lse_ref.abs().max().item()
-                lse_mean_ref = lse_ref.abs().mean().item()
-                lse_max_fa3 = lse_fa3.abs().max().item()
-                lse_mean_fa3 = lse_fa3.abs().mean().item()
-                lse_max_diff = (lse_ref - lse_fa3).abs().max().item()
-                lse_mean_diff = (lse_ref - lse_fa3).abs().mean().item()
-                assert ((lse_max_ref == math.inf and lse_max_fa3 == math.inf) or lse_max_diff <= 1e-3)
-                assert ((lse_mean_ref == math.inf and lse_mean_fa3 == math.inf) or lse_mean_diff <= 1e-4)
+        if cache_seqlen_rand:
+            assert (out_ref - out_fa3).abs().max().item() <= 1e-1
+            assert (out_ref - out_fa3).abs().mean().item() <= 1e-2
+        else:
+            assert (out_ref - out_fa3).abs().max().item() <= 2e-2
+            assert (out_ref - out_fa3).abs().mean().item() <= 2e-3
+        lse_max_ref = lse_ref.abs().max().item()
+        lse_mean_ref = lse_ref.abs().mean().item()
+        lse_max_fa3 = lse_fa3.abs().max().item()
+        lse_mean_fa3 = lse_fa3.abs().mean().item()
+        lse_max_diff = (lse_ref - lse_fa3).abs().max().item()
+        lse_mean_diff = (lse_ref - lse_fa3).abs().mean().item()
+        assert (
+            lse_max_ref == math.inf and lse_max_fa3 == math.inf
+        ) or lse_max_diff <= 1e-3
+        assert (
+            lse_mean_ref == math.inf and lse_mean_fa3 == math.inf
+        ) or lse_mean_diff <= 1e-4
 
 
 if __name__ == "__main__":
