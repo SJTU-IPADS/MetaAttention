@@ -1,16 +1,19 @@
 import torch
 import triton
 import triton.language as tl
-import argparse
-from einops import rearrange, einsum
-import torch.nn.functional as F
 
 import math
-import time
 
 
-def num_splits_heuristic(total_mblocks, num_SMs, num_n_blocks, num_m_blocks, size_one_kv_head,
-                         is_causal_or_local, max_splits):
+def num_splits_heuristic(
+    total_mblocks,
+    num_SMs,
+    num_n_blocks,
+    num_m_blocks,
+    size_one_kv_head,
+    is_causal_or_local,
+    max_splits,
+):
     """
     Determines the optimal number of splits for maximizing GPU occupancy while balancing memory efficiency.
 
@@ -30,7 +33,11 @@ def num_splits_heuristic(total_mblocks, num_SMs, num_n_blocks, num_m_blocks, siz
     if total_mblocks >= 0.8 * num_SMs:
         size_l2 = 50 * 1024 * 1024  # L2 cache size assumption (50MB)
         # Only split if each KV head is too large for L2 and there are enough m_blocks
-        if size_one_kv_head > size_l2 and num_m_blocks >= num_SMs * 2 and not is_causal_or_local:
+        if (
+            size_one_kv_head > size_l2
+            and num_m_blocks >= num_SMs * 2
+            and not is_causal_or_local
+        ):
             return min((size_one_kv_head + size_l2 - 1) // size_l2, max_splits)
         else:
             return 1
@@ -66,10 +73,10 @@ def num_splits_heuristic(total_mblocks, num_SMs, num_n_blocks, num_m_blocks, siz
 @triton.autotune(
     configs=[
         triton.Config({}, num_warps=num_warps, num_stages=num_stages)
-        for num_warps in [1, 2, 4]\
+        for num_warps in [1, 2, 4]
         for num_stages in [1, 2, 3, 4, 7]
     ],
-    key=['BLOCK_H', 'BLOCK_N', 'BLOCK_D'],
+    key=["BLOCK_H", "BLOCK_N", "BLOCK_D"],
 )
 @triton.jit
 def _split_kernel(
@@ -130,16 +137,24 @@ def _split_kernel(
         loop_range = blocks_per_split
 
     q_ptr += batch_idx * stride_q_b + head_idx_q * stride_q_h
-    k_cache_ptr += batch_idx * stride_k_b + head_idx_kv * stride_k_h + offs_n[
-        None, :] * stride_k_s + offs_d[:, None] * stride_k_d
-    v_cache_ptr += batch_idx * stride_v_b + head_idx_kv * stride_v_h + offs_n[:,
-                                                                              None] * stride_v_s + offs_d[
-                                                                                  None, :] * stride_v_d
+    k_cache_ptr += (
+        batch_idx * stride_k_b
+        + head_idx_kv * stride_k_h
+        + offs_n[None, :] * stride_k_s
+        + offs_d[:, None] * stride_k_d
+    )
+    v_cache_ptr += (
+        batch_idx * stride_v_b
+        + head_idx_kv * stride_v_h
+        + offs_n[:, None] * stride_v_s
+        + offs_d[None, :] * stride_v_d
+    )
     mask_ptr += batch_idx * stride_mask_b + head_idx_kv * stride_mask_h
 
     q = tl.load(
         q_ptr + offs_h[:, None] * stride_q_h + offs_d[None, :] * stride_q_d,
-        mask=offs_h[:, None] < gqa_group_size)
+        mask=offs_h[:, None] < gqa_group_size,
+    )
     start = blocks_per_split * split_idx + tl.minimum(split_idx, remaining_blocks)
     for block_idx in range(loop_range):
         start_n = (start + block_idx) * BLOCK_N
@@ -148,8 +163,12 @@ def _split_kernel(
             k_ptr = k_cache_ptr + start_n * stride_k_s
             v_ptr = v_cache_ptr + start_n * stride_v_s
 
-            k = tl.load(k_ptr, mask=start_n + offs_n[None, :] < cache_seqlens, other=0.0)
-            v = tl.load(v_ptr, mask=start_n + offs_n[:, None] < cache_seqlens, other=0.0)
+            k = tl.load(
+                k_ptr, mask=start_n + offs_n[None, :] < cache_seqlens, other=0.0
+            )
+            v = tl.load(
+                v_ptr, mask=start_n + offs_n[:, None] < cache_seqlens, other=0.0
+            )
 
             qk = tl.dot(q, k)
             qk = qk * sm_scale
@@ -170,23 +189,29 @@ def _split_kernel(
     acc = acc * l_recip
     acc = acc.to(o_partial_ptr.dtype.element_ty)
 
-    lse_partial_ptr += batch_idx * stride_lse_b + (
-        head_idx_q + offs_h) * stride_lse_h + split_idx * stride_lse_split
+    lse_partial_ptr += (
+        batch_idx * stride_lse_b
+        + (head_idx_q + offs_h) * stride_lse_h
+        + split_idx * stride_lse_split
+    )
     tl.store(lse_partial_ptr, m_i, mask=offs_h < gqa_group_size)
 
-    o_partial_ptr += batch_idx * stride_o_b + (
-        head_idx_q +
-        offs_h[:, None]) * stride_o_h + split_idx * stride_o_split + offs_d[None, :] * stride_o_d
+    o_partial_ptr += (
+        batch_idx * stride_o_b
+        + (head_idx_q + offs_h[:, None]) * stride_o_h
+        + split_idx * stride_o_split
+        + offs_d[None, :] * stride_o_d
+    )
     tl.store(o_partial_ptr, acc, mask=offs_h[:, None] < gqa_group_size)
 
 
 @triton.autotune(
     configs=[
         triton.Config({}, num_warps=num_warps, num_stages=num_stages)
-        for num_warps in [1, 2, 4]\
+        for num_warps in [1, 2, 4]
         for num_stages in [1, 2, 3, 4, 7]
     ],
-    key=['BLOCK_D'],
+    key=["BLOCK_D"],
 )
 @triton.jit
 def _merge_kernel(
@@ -213,19 +238,28 @@ def _merge_kernel(
     offs_splits = tl.arange(0, num_splits_pow2)
     offs_d = tl.arange(0, BLOCK_D)
 
-    lse_offsets = lse_partial_ptr + batch_idx * lse_partial_stride_b + head_idx * lse_partial_stride_h
+    lse_offsets = (
+        lse_partial_ptr
+        + batch_idx * lse_partial_stride_b
+        + head_idx * lse_partial_stride_h
+    )
     lse = tl.load(
         lse_offsets + offs_splits * lse_partial_stride_split,
         mask=offs_splits < num_splits,
-        other=float("-inf"))
+        other=float("-inf"),
+    )
 
     lse_max = tl.max(lse)
 
-    o_offsets = o_partial_ptr + batch_idx * o_partial_stride_b + head_idx * o_partial_stride_h
+    o_offsets = (
+        o_partial_ptr + batch_idx * o_partial_stride_b + head_idx * o_partial_stride_h
+    )
     o_partial = tl.load(
-        o_offsets + offs_splits[:, None] * o_partial_stride_split +
-        offs_d[None, :] * o_partial_stride_d,
-        mask=offs_splits[:, None] < num_splits)
+        o_offsets
+        + offs_splits[:, None] * o_partial_stride_split
+        + offs_d[None, :] * o_partial_stride_d,
+        mask=offs_splits[:, None] < num_splits,
+    )
     sumexp_normalized_splitk = tl.exp(lse - lse_max)
     sumexp_normalized = tl.sum(sumexp_normalized_splitk, axis=0)
     numerator_normalized = tl.sum(o_partial * sumexp_normalized_splitk[:, None], axis=0)
@@ -261,8 +295,9 @@ def block_sparse_flash_decode_gqa_mask_triton(
     num_m_blocks = 1 * (heads // heads_kv + block_H - 1) // block_H
     num_n_blocks = max_selected_blocks
 
-    size_one_kv_head = max_selected_blocks * block_size * (
-        dim + dim_v) * 2  #kv_seqlen * (dim + dim_v) * 2
+    size_one_kv_head = (
+        max_selected_blocks * block_size * (dim + dim_v) * 2
+    )  # kv_seqlen * (dim + dim_v) * 2
     total_mblocks = batch * heads_kv * num_m_blocks
     num_sm = 64
     # num_sm = self.num_sm
@@ -273,14 +308,19 @@ def block_sparse_flash_decode_gqa_mask_triton(
         num_m_blocks,
         size_one_kv_head,
         is_causal_or_local=True,
-        max_splits=128)
+        max_splits=128,
+    )
 
     # print("num_splits:", num_splits, "num_blocks:", num_n_blocks)
 
     num_splits_pow2 = triton.next_power_of_2(num_splits)
 
-    o_partial = torch.empty((batch, heads, num_splits, dim_v), device=q.device, dtype=q.dtype)
-    lse_partial = torch.empty((batch, heads, num_splits), device=q.device, dtype=torch.float32)
+    o_partial = torch.empty(
+        (batch, heads, num_splits, dim_v), device=q.device, dtype=q.dtype
+    )
+    lse_partial = torch.empty(
+        (batch, heads, num_splits), device=q.device, dtype=torch.float32
+    )
 
     BLOCK_D = dim
     BLOCK_H = group_size if group_size > 16 else 16
@@ -344,5 +384,3 @@ def block_sparse_flash_decode_gqa_mask_triton(
     )
 
     return output
-
-

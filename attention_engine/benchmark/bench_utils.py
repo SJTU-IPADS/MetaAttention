@@ -2,10 +2,9 @@ import torch
 import math
 import torch.nn.functional as F
 
-import torch
 import matplotlib.pyplot as plt
 
-from functools import lru_cache, partial
+from functools import lru_cache
 import functools
 
 from einops import rearrange, einsum
@@ -99,8 +98,9 @@ def do_bench(
     return time
 
 
-def analysis_tensor_data(a: torch.Tensor, plot: bool = False,
-                         figure_name: str = 'tensor_distribution.png'):
+def analysis_tensor_data(
+    a: torch.Tensor, plot: bool = False, figure_name: str = "tensor_distribution.png"
+):
     print(f"Data type: {a.dtype}")
     print(f"Device: {a.device}")
     print(f"Shape: {a.shape}")
@@ -115,9 +115,9 @@ def analysis_tensor_data(a: torch.Tensor, plot: bool = False,
 
     if plot:
         plt.hist(a.float().cpu().detach().numpy().flatten(), bins=50)
-        plt.title('Tensor Distribution')
-        plt.xlabel('Value')
-        plt.ylabel('Frequency')
+        plt.title("Tensor Distribution")
+        plt.xlabel("Value")
+        plt.ylabel("Frequency")
         plt.show()
         plt.savefig(figure_name)
 
@@ -131,18 +131,18 @@ def analysis_tensor_data(a: torch.Tensor, plot: bool = False,
 
 
 def assert_close(
-    actual: torch.Tensor, 
-    expected: torch.Tensor, 
-    rtol: float = 1e-5, 
-    atol: float = 1e-8, 
+    actual: torch.Tensor,
+    expected: torch.Tensor,
+    rtol: float = 1e-5,
+    atol: float = 1e-8,
     equal_nan: bool = False,
     mismatch_ratio: float = 0.0,
-    msg: str = None
+    msg: str = None,
 ):
     """
-    
+
     Args:
-        actual (Tensor): actual 
+        actual (Tensor): actual
         expected (Tensor): expected
         rtol (float): relative tolerance
         atol (float): absolute tolerance
@@ -157,8 +157,10 @@ def assert_close(
 
     # 1. Use torch.isclose to get a boolean mask of element-wise closeness
     # close_mask is True where elements are within tolerance
-    close_mask = torch.isclose(actual, expected, rtol=rtol, atol=atol, equal_nan=equal_nan)
-    
+    close_mask = torch.isclose(
+        actual, expected, rtol=rtol, atol=atol, equal_nan=equal_nan
+    )
+
     # 2. Calculate the number and ratio of mismatches
     total_elements = close_mask.numel()
     mismatch_count = (~close_mask).sum().item()
@@ -168,10 +170,11 @@ def assert_close(
         default_msg = (
             f"Mismatch ratio {current_mismatch_ratio:.6f} exceeds allowed threshold {mismatch_ratio}.\n"
             f"Mismatched elements: {mismatch_count}/{total_elements}\n"
-            f"Max mismatch ratio allowed: {mismatch_ratio} ({mismatch_ratio*100}%)"
+            f"Max mismatch ratio allowed: {mismatch_ratio} ({mismatch_ratio * 100}%)"
         )
         raise AssertionError(msg if msg else default_msg)
-    
+
+
 def check_close(o, O_ref, rtol=1e-3, atol=1e-3):
     absolute_error = torch.abs(o - O_ref)
     relative_error = absolute_error / (torch.abs(O_ref) + 1e-6)
@@ -192,7 +195,8 @@ def check_close(o, O_ref, rtol=1e-3, atol=1e-3):
         error_indices = torch.nonzero(~tolerance_check, as_tuple=False)
         for idx in error_indices[:10]:
             print(
-                f"Index: {tuple(idx.cpu().numpy())}, Reference: {O_ref[tuple(idx.cpu().numpy())]}, Library: {o[tuple(idx.cpu().numpy())]}")
+                f"Index: {tuple(idx.cpu().numpy())}, Reference: {O_ref[tuple(idx.cpu().numpy())]}, Library: {o[tuple(idx.cpu().numpy())]}"
+            )
 
     return result
 
@@ -200,28 +204,30 @@ def check_close(o, O_ref, rtol=1e-3, atol=1e-3):
 def print_debug(o, O_ref, rtol=1e-3, atol=1e-3, save_file=True):
     # 计算容差阈值
     tolerance_threshold = atol + rtol * torch.abs(O_ref)
-    
+
     # 计算绝对差异
     abs_diff = torch.abs(o - O_ref)
-    
+
     # 找出超过容差的元素
     exceed_mask = abs_diff > tolerance_threshold
     total_elements = o.numel()
     num_exceed = exceed_mask.sum().item()
     percentage_exceed = (num_exceed / total_elements) * 100
-    
+
     print(f"{num_exceed} elements exceed tolerance.")
     print(f"{percentage_exceed:.2f}% of the elements exceed tolerance.")
     print(f"Total elements: {total_elements}, Exceed tolerance elements: {num_exceed}")
-    
+
     # 找出超过容差的最大差异值和索引
     if num_exceed > 0:
         # 只在有超过容差的元素时计算
-        exceed_diff = torch.where(exceed_mask, abs_diff, torch.tensor(0.0, device=o.device))
+        exceed_diff = torch.where(
+            exceed_mask, abs_diff, torch.tensor(0.0, device=o.device)
+        )
         max_exceed_diff = exceed_diff.max().item()
         max_exceed_idx = exceed_diff.argmax().item()
         max_exceed_idx = torch.unravel_index(torch.tensor(max_exceed_idx), o.shape)
-        
+
         print(f"Max exceed diff: {max_exceed_diff} at index {max_exceed_idx}")
         print(f"Tolerance threshold: {tolerance_threshold[max_exceed_idx].item()}")
         print(f"Reference: {O_ref[max_exceed_idx]}")
@@ -231,7 +237,7 @@ def print_debug(o, O_ref, rtol=1e-3, atol=1e-3, save_file=True):
         print("No elements exceed tolerance.")
         max_exceed_diff = 0.0
         max_exceed_idx = None
-    
+
     # 原有的最大绝对差异计算
     max_diff = abs_diff.max().item()
     max_diff_idx = abs_diff.argmax().item()
@@ -240,7 +246,7 @@ def print_debug(o, O_ref, rtol=1e-3, atol=1e-3, save_file=True):
     print(f"Reference: {O_ref[max_exceed_idx]}")
     print(f"Library: {o[max_exceed_idx]}")
     print(torch.allclose(o, O_ref, rtol=rtol, atol=atol))
-    
+
     # 最大相对差异计算
     max_rel_diff = (abs_diff / torch.abs(O_ref)).max().item()
     max_rel_diff_idx = (abs_diff / torch.abs(O_ref)).argmax().item()
@@ -258,6 +264,7 @@ def print_debug(o, O_ref, rtol=1e-3, atol=1e-3, save_file=True):
             o_1 = o.cpu()
             for idx, element in enumerate(o_1):
                 f.write(f"{idx}: {element}\n")
+
 
 # def bench_func_fwd(attn, B, H, S, D, DV, custom_fwd_input={}, causal=True, dtype=torch.float16):
 #     tflops = 2 * B * H * S * S * D + 2 * B * H * S * S * DV
@@ -323,9 +330,13 @@ def print_debug(o, O_ref, rtol=1e-3, atol=1e-3, save_file=True):
 # (tflops/latency_ref*1e-9)
 
 
-def do_bench_mamba(linear_attention, B, HQ, HK, H, TLen,
-                   D, DV, BT, requires_grad=False):
-    from mamba_ssm.ops.triton.ssd_combined import mamba_chunk_scan_combined, ssd_chunk_scan_combined_ref
+def do_bench_mamba(
+    linear_attention, B, HQ, HK, H, TLen, D, DV, BT, requires_grad=False
+):
+    from mamba_ssm.ops.triton.ssd_combined import (
+        mamba_chunk_scan_combined,
+    )
+
     torch.cuda.manual_seed(0)
     # torch.cuda.set_device(1)
     # B, H, D, DV = 16, 8, 128, 128
@@ -341,8 +352,7 @@ def do_bench_mamba(linear_attention, B, HQ, HK, H, TLen,
     B_mamba = 0.8 * torch.randn(B, TLen, HK, D, dtype=dtype, device=device)
     C_mamba = torch.randn(B, TLen, HQ, D, dtype=dtype, device=device)
     if requires_grad:
-        do_mamba = 0.1 * torch.randn(B, TLen, H,
-                                     DV, dtype=dtype, device=device)
+        do_mamba = 0.1 * torch.randn(B, TLen, H, DV, dtype=dtype, device=device)
 
     # initialize dt_bias
     factory_kwargs = {"device": device, "dtype": dtype}
@@ -369,9 +379,15 @@ def do_bench_mamba(linear_attention, B, HQ, HK, H, TLen,
     C_mamba.detach_().requires_grad_(requires_grad)
 
     out_ref = mamba_chunk_scan_combined(
-        X_mamba, dt_mamba, A_mamba, B_mamba, C_mamba,
-        chunk_size=BT, D=None, return_final_states=False,
-        dt_bias=None  # dt_bias_mamba
+        X_mamba,
+        dt_mamba,
+        A_mamba,
+        B_mamba,
+        C_mamba,
+        chunk_size=BT,
+        D=None,
+        return_final_states=False,
+        dt_bias=None,  # dt_bias_mamba
     )
     # ssd_chunk_scan_combined_ref = torch.compile(ssd_chunk_scan_combined_ref)
     # out_ref = ssd_chunk_scan_combined_ref(
@@ -395,9 +411,7 @@ def do_bench_mamba(linear_attention, B, HQ, HK, H, TLen,
     A_mamba1 = A_mamba1.detach().requires_grad_(requires_grad)
     dt_mamba1 = dt_mamba1.detach().requires_grad_(requires_grad)
 
-    out = linear_attention(
-        q, k, v, dt_mamba1, A_mamba1, dt_mamba1.bfloat16()
-    )
+    out = linear_attention(q, k, v, dt_mamba1, A_mamba1, dt_mamba1.bfloat16())
     if requires_grad:
         out.backward(do_mamba1, retain_graph=True)
         out_ref.backward(do_mamba, retain_graph=True)
@@ -412,27 +426,26 @@ def do_bench_mamba(linear_attention, B, HQ, HK, H, TLen,
         print_debug(k.grad.transpose(1, 2), B_mamba.grad, rtol=1e-2, atol=1e-2)
         print_debug(v.grad.transpose(1, 2), X_mamba.grad, rtol=1e-2, atol=1e-2)
         print_debug(A_mamba1.grad, A_mamba.grad[None, :], rtol=1e-2, atol=1e-2)
-        print_debug(
-            dt_mamba1.grad.transpose(
-                1,
-                2),
-            dt_mamba.grad,
-            rtol=1e-2,
-            atol=1e-2)
+        print_debug(dt_mamba1.grad.transpose(1, 2), dt_mamba.grad, rtol=1e-2, atol=1e-2)
 
     from tilelang.profiler import do_bench
 
     def run():
-        out = linear_attention(
-            q, k, v, dt_mamba1, A_mamba1, dt_mamba1.bfloat16()
-        )
+        linear_attention(q, k, v, dt_mamba1, A_mamba1, dt_mamba1.bfloat16())
 
     def run_ref():
-        out_ref = mamba_chunk_scan_combined(
-            X_mamba, dt_mamba, A_mamba, B_mamba, C_mamba,
-            chunk_size=BT, D=None, return_final_states=False,
-            dt_bias=None  # dt_bias_mamba
+        mamba_chunk_scan_combined(
+            X_mamba,
+            dt_mamba,
+            A_mamba,
+            B_mamba,
+            C_mamba,
+            chunk_size=BT,
+            D=None,
+            return_final_states=False,
+            dt_bias=None,  # dt_bias_mamba
         )
+
     #     out_ref = ssd_chunk_scan_combined_ref(
     #         X_mamba, dt_mamba, A_mamba, B_mamba, C_mamba,
     #         chunk_size=BT, D=None, # return_final_states=False,
@@ -455,7 +468,6 @@ def do_bench_mamba(linear_attention, B, HQ, HK, H, TLen,
     print("MAMBA2: {:.5f} ms".format(latency))
 
     if requires_grad:
-
         latency = do_bench(run_backward, warmup=100, rep=100)
         print("tl: {:.5f} ms".format(latency))
 
@@ -482,14 +494,7 @@ def test_mamba_simple_gla():
     A_mamba = A_mamba.detach().requires_grad_()
     B_mamba = 0.8 * torch.randn(B, TLen, H, D, dtype=dtype, device=device)
     B_mamba = B_mamba.detach().requires_grad_()
-    C_mamba = torch.randn(
-        B,
-        TLen,
-        H,
-        D,
-        dtype=dtype,
-        device=device,
-        requires_grad=True)
+    C_mamba = torch.randn(B, TLen, H, D, dtype=dtype, device=device, requires_grad=True)
     do_mamba = 0.1 * torch.randn(B, TLen, H, DV, dtype=dtype, device=device)
 
     factory_kwargs = {"device": device, "dtype": dtype}
@@ -509,9 +514,15 @@ def test_mamba_simple_gla():
     dt_mamba = dt_mamba.detach().requires_grad_()
 
     out_ref = mamba_chunk_scan_combined(
-        X_mamba, dt_mamba, A_mamba, B_mamba, C_mamba,
-        chunk_size=BT, D=None, return_final_states=False,
-        dt_bias=None  # dt_bias_mamba
+        X_mamba,
+        dt_mamba,
+        A_mamba,
+        B_mamba,
+        C_mamba,
+        chunk_size=BT,
+        D=None,
+        return_final_states=False,
+        dt_bias=None,  # dt_bias_mamba
     )
     out_ref.backward(do_mamba)
 
@@ -522,16 +533,19 @@ def test_mamba_simple_gla():
     v = X_mamba.clone().detach().transpose(1, 2).contiguous().requires_grad_()
     # g = (A_mamba * dt_mamba).transpose(1, 2).contiguous()
     A_mamba1 = A_mamba[None, :].clone().detach().contiguous().requires_grad_()
-    dt_bias_mamba1 = dt_bias_mamba[:, None].contiguous()
-    dt_mamba1 = dt_mamba.clone().detach().transpose(
-        1, 2).contiguous().requires_grad_()
+    dt_bias_mamba[:, None].contiguous()
+    dt_mamba1 = dt_mamba.clone().detach().transpose(1, 2).contiguous().requires_grad_()
     dt_mamba1_k = dt_mamba1.clone().detach().bfloat16().requires_grad_()
 
     do_mamba1 = do_mamba.transpose(1, 2).contiguous()
     out, _ = chunk_simple_gla(
         # gla dt_mamba1 is bf16
-        q, k * dt_mamba1_k[..., None], v, dt_mamba1_k * A_mamba1[..., None],
-        scale=1.0, output_final_state=False
+        q,
+        k * dt_mamba1_k[..., None],
+        v,
+        dt_mamba1_k * A_mamba1[..., None],
+        scale=1.0,
+        output_final_state=False,
     )
     out.backward(do_mamba1)
     out = out.transpose(1, 2).contiguous()
@@ -568,17 +582,26 @@ def test_mamba_simple_gla():
 
     def run():
         out, _ = chunk_simple_gla(
-            q, k * dt_mamba1_k[..., None], v, dt_mamba1_k *
-            A_mamba1[..., None],
-            scale=1.0, output_final_state=False
+            q,
+            k * dt_mamba1_k[..., None],
+            v,
+            dt_mamba1_k * A_mamba1[..., None],
+            scale=1.0,
+            output_final_state=False,
         )
         out.backward(do_mamba1)
 
     def run_ref():
         out_ref = mamba_chunk_scan_combined(
-            X_mamba, dt_mamba, A_mamba, B_mamba, C_mamba,
-            chunk_size=BT, D=None, return_final_states=False,
-            dt_bias=None  # dt_bias_mamba
+            X_mamba,
+            dt_mamba,
+            A_mamba,
+            B_mamba,
+            C_mamba,
+            chunk_size=BT,
+            D=None,
+            return_final_states=False,
+            dt_bias=None,  # dt_bias_mamba
         )
         out_ref.backward(do_mamba)
 
@@ -593,8 +616,7 @@ def test_mamba_simple_gla():
     print("MAMBA2: {:.5f} ms".format(latency))
 
 
-def do_bench_simple_gla(linear_attention, B, H, TLen,
-                        D, DV, BT, requires_grad=False):
+def do_bench_simple_gla(linear_attention, B, H, TLen, D, DV, BT, requires_grad=False):
     torch.cuda.manual_seed(0)
     # torch.cuda.set_device(1)
     # B, H, D, DV = 16, 8, 128, 128
@@ -606,8 +628,9 @@ def do_bench_simple_gla(linear_attention, B, H, TLen,
 
     q = torch.randn(B, H, TLen, D, device=device, dtype=dtype)
     k = torch.randn(B, H, TLen, D, device=device, dtype=dtype)
-    g = F.logsigmoid(torch.randn(B, H, TLen, device=device,
-                     dtype=accum_dtype)).clamp_min(-5)
+    g = F.logsigmoid(
+        torch.randn(B, H, TLen, device=device, dtype=accum_dtype)
+    ).clamp_min(-5)
     v = torch.randn(B, H, TLen, DV, device=device, dtype=dtype)
     do = torch.randn(B, H, TLen, DV, device=device, dtype=dtype)
 
@@ -617,7 +640,7 @@ def do_bench_simple_gla(linear_attention, B, H, TLen,
     v.detach_().requires_grad_(requires_grad)
 
     from fla.ops.simple_gla import chunk_simple_gla
-    from fla.ops.simple_gla.naive import torch_simple_gla
+
     q1 = q.clone()
     k1 = k.clone()
     v1 = v.clone()
@@ -628,16 +651,12 @@ def do_bench_simple_gla(linear_attention, B, H, TLen,
     g1.detach_().requires_grad_(requires_grad)
     v1.detach_().requires_grad_(requires_grad)
 
-    out_ref, _ = chunk_simple_gla(
-        q1, k1, v1, g1, scale=None, output_final_state=False
-    )
+    out_ref, _ = chunk_simple_gla(q1, k1, v1, g1, scale=None, output_final_state=False)
     # torch_simple_gla = torch.compile(torch_simple_gla)
     # out_ref = torch_simple_gla(
     #         q, k, v, g1, scale=None, chunk_size=512
     # )
-    out = linear_attention(
-        q, k, v, g
-    )
+    out = linear_attention(q, k, v, g)
     print_debug(out, out_ref, rtol=1e-2, atol=1e-2)
 
     if requires_grad:
@@ -651,14 +670,10 @@ def do_bench_simple_gla(linear_attention, B, H, TLen,
     from tilelang.profiler import do_bench
 
     def run():
-        out = linear_attention(
-            q, k, v, g
-        )
+        linear_attention(q, k, v, g)
 
     def run_ref():
-        out, _ = chunk_simple_gla(
-            q, k, v, g1, scale=None, output_final_state=False
-        )
+        out, _ = chunk_simple_gla(q, k, v, g1, scale=None, output_final_state=False)
         # out = torch_simple_gla(
         #     q, k, v, g1, scale=None, chunk_size=512
         # )
@@ -681,8 +696,7 @@ def do_bench_simple_gla(linear_attention, B, H, TLen,
         print("simple gla backward: {:.2f} ms".format(latency))
 
 
-def do_bench_retention_linear(
-        linear_attention, B, H, TLen, D, DV, requires_grad=False):
+def do_bench_retention_linear(linear_attention, B, H, TLen, D, DV, requires_grad=False):
     torch.cuda.manual_seed(0)
     # torch.cuda.set_device(1)
     # B, H, D, DV = 16, 8, 128, 128
@@ -707,10 +721,8 @@ def do_bench_retention_linear(
 
     do = torch.randn(B, H, TLen, DV, device=device, dtype=dtype)
     from fla.ops.retention import chunk_retention
-    from fla.ops.retention.naive import naive_retention
-    out_ref, _ = chunk_retention(
-        q, k, v, scale=None, output_final_state=False
-    )
+
+    out_ref, _ = chunk_retention(q, k, v, scale=None, output_final_state=False)
     # naive_retention = torch.compile(naive_retention)
     # out_ref = naive_retention(q,k,v)
 
@@ -723,9 +735,7 @@ def do_bench_retention_linear(
     k1.detach_().requires_grad_(requires_grad)
     g1.detach_().requires_grad_(False)
     v1.detach_().requires_grad_(requires_grad)
-    out = linear_attention(
-        q1, k1, v1, g1
-    )
+    out = linear_attention(q1, k1, v1, g1)
     print_debug(out, out_ref, rtol=1e-2, atol=1e-2)
     if requires_grad:
         out.backward(do, retain_graph=True)
@@ -737,14 +747,10 @@ def do_bench_retention_linear(
     from tilelang.profiler import do_bench
 
     def run():
-        out = linear_attention(
-            q, k, v, g
-        )
+        linear_attention(q, k, v, g)
 
     def run_ref():
-        out, _ = chunk_retention(
-            q, k, v, scale=None, output_final_state=False
-        )
+        out, _ = chunk_retention(q, k, v, scale=None, output_final_state=False)
         # out = naive_retention(q,k,v)
 
     def run_bacward():
@@ -765,8 +771,9 @@ def do_bench_retention_linear(
         print("retention backward: {:.2f} ms".format(latency))
 
 
-def do_bench_sigmoidattn(attn, B, H, S, D, DV,
-                         dtype=torch.float16, requires_grad=False):
+def do_bench_sigmoidattn(
+    attn, B, H, S, D, DV, dtype=torch.float16, requires_grad=False
+):
     tflops = 2 * B * H * S * S * D + 2 * B * H * S * S * DV
     tflops = tflops * 0.5
     bwd_tflops = 4 * B * H * S * S * DV + 6 * B * H * S * S * D
@@ -784,13 +791,10 @@ def do_bench_sigmoidattn(attn, B, H, S, D, DV,
     value = torch.randn(
         B, S, H, DV, device=device, dtype=dtype, requires_grad=requires_grad
     )
-    do = torch.randn(
-        B, S, H, DV, device=device, dtype=dtype, requires_grad=False
+    do = torch.randn(B, S, H, DV, device=device, dtype=dtype, requires_grad=False)
+    softmax_bias = 0.1 * torch.randn(
+        1, device=device, dtype=accum_dtype, requires_grad=False
     )
-    softmax_bias = 0.1 * torch.randn(1,
-                                     device=device,
-                                     dtype=accum_dtype,
-                                     requires_grad=False)
     softmax_bias_cpu = softmax_bias.cpu()
 
     o = attn(query, key, value, softmax_bias)
@@ -802,42 +806,35 @@ def do_bench_sigmoidattn(attn, B, H, S, D, DV,
 
     try:
         from flash_sigmoid import flash_attn_func
-    except:
+    except Exception:
+
         def flash_attn_func(query, key, value, softmax_scale, causal, sigmoid_bias):
             dim = query.shape[-1]
             num_head_groups = query.shape[2] // key.shape[2]
             if softmax_scale is None:
-                softmax_scale = 1 / dim** 0.5
+                softmax_scale = 1 / dim**0.5
 
             query = rearrange(
-                query, 'b s (h g) d -> b s g h d',
-                g=num_head_groups)  # [batch_size, num_head_groups, groups, dim]
-            scores = einsum(query, key,
-            'b s g h d, b t h d -> b g h s t')
+                query, "b s (h g) d -> b s g h d", g=num_head_groups
+            )  # [batch_size, num_head_groups, groups, dim]
+            scores = einsum(query, key, "b s g h d, b t h d -> b g h s t")
             if causal:
                 seqlenq = query.shape[1]
                 seqlenk = key.shape[1]
-                mask = torch.tril(
-                    torch.ones(
-                        seqlenq, seqlenk, device=scores.device))
+                mask = torch.tril(torch.ones(seqlenq, seqlenk, device=scores.device))
                 mask = mask.unsqueeze(0).unsqueeze(0)
-                scores = scores.masked_fill(mask == 0, float('-inf'))
+                scores = scores.masked_fill(mask == 0, float("-inf"))
             scores *= softmax_scale
             scores += sigmoid_bias.to(scores.device)
             attention = F.sigmoid(scores)
 
-            out = einsum(attention, value,
-                 'b g h s t, b t h d -> b g h s d')
-            out = rearrange(out, 'b g h s d -> b s (h g) d') 
+            out = einsum(attention, value, "b g h s t, b t h d -> b g h s d")
+            out = rearrange(out, "b g h s d -> b s (h g) d")
             return out
 
     o_ref = flash_attn_func(
-        query,
-        key,
-        value,
-        softmax_scale=1.0,
-        causal=True,
-        sigmoid_bias=softmax_bias_cpu)
+        query, key, value, softmax_scale=1.0, causal=True, sigmoid_bias=softmax_bias_cpu
+    )
     print_debug(o, o_ref)
     if requires_grad:
         o_ref.backward(do, retain_graph=True)
@@ -848,22 +845,24 @@ def do_bench_sigmoidattn(attn, B, H, S, D, DV,
     from tilelang.profiler import do_bench
 
     def run():
-        o = attn(query, key, value, softmax_bias)
+        attn(query, key, value, softmax_bias)
 
     def run_bacward():
         o.backward(do, retain_graph=True)
 
     def run_ref():
-        o_ref = flash_attn_func(
+        flash_attn_func(
             query,
             key,
             value,
             softmax_scale=1.0,
             causal=True,
-            sigmoid_bias=softmax_bias_cpu)
+            sigmoid_bias=softmax_bias_cpu,
+        )
 
     def run_ref_backward():
         o_ref.backward(do, retain_graph=True)
+
     # do_bench(run)
     # do_bench(run_bacward)
 
@@ -885,7 +884,8 @@ def do_bench_sigmoidattn(attn, B, H, S, D, DV,
 
 
 def do_bench_sigmoidattn_cute(
-        attn, B, H, S, D, DV, dtype=torch.float16, requires_grad=False):
+    attn, B, H, S, D, DV, dtype=torch.float16, requires_grad=False
+):
     tflops = 2 * B * H * S * S * D + 2 * B * H * S * S * DV
     tflops = tflops * 0.5
     bwd_tflops = 4 * B * H * S * S * DV + 6 * B * H * S * S * D
@@ -903,13 +903,11 @@ def do_bench_sigmoidattn_cute(
     value = torch.randn(
         B, S, H, DV, device=device, dtype=dtype, requires_grad=requires_grad
     )
-    do = torch.randn(
-        B, S, H, DV, device=device, dtype=dtype, requires_grad=False
+    do = torch.randn(B, S, H, DV, device=device, dtype=dtype, requires_grad=False)
+    softmax_bias = (
+        0.1
+        * torch.randn(1, device=device, dtype=accum_dtype, requires_grad=False).cpu()
     )
-    softmax_bias = 0.1 * torch.randn(1,
-                                     device=device,
-                                     dtype=accum_dtype,
-                                     requires_grad=False).cpu()
     # softmax_bias_cpu = softmax_bias.cpu()
 
     o = attn(query, key, value, softmax_bias)
@@ -922,12 +920,8 @@ def do_bench_sigmoidattn_cute(
     from flash_sigmoid import flash_attn_func
 
     o_ref = flash_attn_func(
-        query,
-        key,
-        value,
-        softmax_scale=1.0,
-        causal=True,
-        sigmoid_bias=softmax_bias)
+        query, key, value, softmax_scale=1.0, causal=True, sigmoid_bias=softmax_bias
+    )
     print_debug(o, o_ref)
     if requires_grad:
         o_ref.backward(do, retain_graph=True)
@@ -938,19 +932,15 @@ def do_bench_sigmoidattn_cute(
     from tilelang.profiler import do_bench
 
     def run():
-        o = attn(query, key, value, softmax_bias)
+        attn(query, key, value, softmax_bias)
 
     def run_bacward():
         o.backward(do, retain_graph=True)
 
     def run_ref():
-        o_ref = flash_attn_func(
-            query,
-            key,
-            value,
-            softmax_scale=1.0,
-            causal=True,
-            sigmoid_bias=softmax_bias)
+        flash_attn_func(
+            query, key, value, softmax_scale=1.0, causal=True, sigmoid_bias=softmax_bias
+        )
 
     def run_ref_backward():
         o_ref.backward(do, retain_graph=True)
@@ -982,51 +972,38 @@ def bench_sigmoidattn_fwd(attn, B, H, S, D, DV, causal=True):
     torch.cuda.manual_seed(0)
     dtype = torch.float16
     device = "cuda"
-    accum_dtype = torch.float32
-    query = torch.randn(
-        B, S, H, D, device=device, dtype=dtype, requires_grad=True
+    query = torch.randn(B, S, H, D, device=device, dtype=dtype, requires_grad=True)
+    key = torch.randn(B, S, H, D, device=device, dtype=dtype, requires_grad=True)
+    value = torch.randn(B, S, H, DV, device=device, dtype=dtype, requires_grad=True)
+    torch.randn(B, S, H, DV, device=device, dtype=dtype, requires_grad=True)
+    softmax_bias = 0.1 * torch.randn(
+        1, device=device, dtype=torch.float, requires_grad=False
     )
-    key = torch.randn(
-        B, S, H, D, device=device, dtype=dtype, requires_grad=True
-    )
-    value = torch.randn(
-        B, S, H, DV, device=device, dtype=dtype, requires_grad=True
-    )
-    do = torch.randn(
-        B, S, H, DV, device=device, dtype=dtype, requires_grad=True
-    )
-    softmax_bias = 0.1 * torch.randn(1,
-                                     device=device,
-                                     dtype=torch.float,
-                                     requires_grad=False)
     softmax_bias_cpu = softmax_bias.cpu()
 
-    o = attn(query, key, value, softmax_bias)
+    attn(query, key, value, softmax_bias)
 
     from flash_sigmoid import flash_attn_func
 
-    o_ref = flash_attn_func(
-        query,
-        key,
-        value,
-        softmax_scale=1.0,
-        causal=True,
-        sigmoid_bias=softmax_bias_cpu)
+    flash_attn_func(
+        query, key, value, softmax_scale=1.0, causal=True, sigmoid_bias=softmax_bias_cpu
+    )
     # print_debug(o, o_ref)
 
     from tilelang.profiler import do_bench
 
     def run():
-        o = attn(query, key, value, softmax_bias)
+        attn(query, key, value, softmax_bias)
 
     def run_ref():
-        o_ref = flash_attn_func(
+        flash_attn_func(
             query,
             key,
             value,
             softmax_scale=1.0,
             causal=True,
-            sigmoid_bias=softmax_bias_cpu)
+            sigmoid_bias=softmax_bias_cpu,
+        )
 
     do_bench(run)
     do_bench(run_ref)
@@ -1038,12 +1015,17 @@ def bench_sigmoidattn_fwd(attn, B, H, S, D, DV, causal=True):
     latency_ref = do_bench(run_ref, warmup=500, rep=1000)
     print("flash: {:.2f} ms".format(latency_ref))
     print("tflops: {:.2f}".format(tflops / latency_ref * 1e-9))
-    return latency, (tflops / latency *
-                     1e-9), latency_ref, (tflops / latency_ref * 1e-9)
+    return (
+        latency,
+        (tflops / latency * 1e-9),
+        latency_ref,
+        (tflops / latency_ref * 1e-9),
+    )
 
 
-def do_bench_reluattn(attn, B, H, S, D, DV,
-                      dtype=torch.float16, causal=False, requires_grad=False):
+def do_bench_reluattn(
+    attn, B, H, S, D, DV, dtype=torch.float16, causal=False, requires_grad=False
+):
     tflops = 2 * B * H * S * S * D + 2 * B * H * S * S * DV
     tflops = tflops * 0.5 if causal else tflops
     bwd_tflops = 4 * B * H * S * S * DV + 6 * B * H * S * S * D
@@ -1051,7 +1033,6 @@ def do_bench_reluattn(attn, B, H, S, D, DV,
     torch.cuda.manual_seed(0)
     dtype = dtype
     device = "cuda"
-    accum_dtype = torch.float32
     query = torch.randn(
         B, S, H, D, device=device, dtype=dtype, requires_grad=requires_grad
     )
@@ -1061,9 +1042,7 @@ def do_bench_reluattn(attn, B, H, S, D, DV,
     value = torch.randn(
         B, S, H, DV, device=device, dtype=dtype, requires_grad=requires_grad
     )
-    do = torch.randn(
-        B, S, H, DV, device=device, dtype=dtype, requires_grad=False
-    )
+    do = torch.randn(B, S, H, DV, device=device, dtype=dtype, requires_grad=False)
 
     o = attn(query, key, value)
     if requires_grad:
@@ -1073,10 +1052,10 @@ def do_bench_reluattn(attn, B, H, S, D, DV,
         dV, value.grad = value.grad.clone(), None
 
     def ref_program(query, key, value):
-        qk = torch.einsum('bqhd,bkhd->bhqk', query, key)
-        qk = qk / (D ** 0.5)
+        qk = torch.einsum("bqhd,bkhd->bhqk", query, key)
+        qk = qk / (D**0.5)
         qk = F.relu(qk)
-        o = torch.einsum('bhqk,bkhd->bqhd', qk, value)
+        o = torch.einsum("bhqk,bkhd->bqhd", qk, value)
         return o
 
     o_ref = ref_program(query, key, value)
@@ -1090,13 +1069,13 @@ def do_bench_reluattn(attn, B, H, S, D, DV,
     from tilelang.profiler import do_bench
 
     def run():
-        o = attn(query, key, value)
+        attn(query, key, value)
 
     def run_bacward():
         o.backward(do, retain_graph=True)
 
     def run_ref():
-        o_ref = ref_program(query, key, value)
+        ref_program(query, key, value)
 
     def run_ref_backward():
         o_ref.backward(do, retain_graph=True)
@@ -1126,22 +1105,17 @@ def do_bench_retention(attn, B, H, S, D, DV, dtype=torch.bfloat16):
     torch.cuda.manual_seed(0)
     dtype = dtype
     device = "cuda"
-    accum_dtype = torch.float32
-    query = torch.randn(
-        B, S, H, D, device=device, dtype=dtype, requires_grad=True
-    ) * ((1 / D)**0.5)
-    key = torch.randn(
-        B, S, H, D, device=device, dtype=dtype, requires_grad=True
+    query = torch.randn(B, S, H, D, device=device, dtype=dtype, requires_grad=True) * (
+        (1 / D) ** 0.5
     )
-    value = torch.randn(
-        B, S, H, DV, device=device, dtype=dtype, requires_grad=True
+    key = torch.randn(B, S, H, D, device=device, dtype=dtype, requires_grad=True)
+    value = torch.randn(B, S, H, DV, device=device, dtype=dtype, requires_grad=True)
+    torch.randn(B, S, H, DV, device=device, dtype=dtype, requires_grad=True)
+    mask = (
+        torch.rand(1, H, S, S, device="cuda", dtype=dtype, requires_grad=False)
+        .tril()
+        .contiguous()
     )
-    do = torch.randn(
-        B, S, H, DV, device=device, dtype=dtype, requires_grad=True
-    )
-    mask = torch.rand(
-        1, H, S, S, device="cuda", dtype=dtype, requires_grad=False
-    ).tril().contiguous()
     # query = torch.empty(B, S, H, D, device=device, dtype=dtype).normal_(-0.1, 0.1)
     # key = torch.empty(B, S, H, D, device=device, dtype=dtype).normal_(-0.1, 0.1)
     # value = torch.empty(B, S, H, DV, device=device, dtype=dtype).normal_(-0.1, 0.1)
@@ -1156,11 +1130,12 @@ def do_bench_retention(attn, B, H, S, D, DV, dtype=torch.bfloat16):
     # print(value.grad)
 
     def ref_program(query, key, value, mask):
-        qk = torch.einsum('bqhd,bkhd->bhqk', query, key)
+        qk = torch.einsum("bqhd,bkhd->bhqk", query, key)
         qkm = qk * mask
         r = qkm.detach().abs().sum(dim=-1, keepdim=True).clamp(min=1.0)
-        o = torch.einsum('bhqk,bkhd->bqhd', qkm / r, value)
+        o = torch.einsum("bhqk,bkhd->bqhd", qkm / r, value)
         return o.to(dtype=dtype)
+
     o_ref = ref_program(query, key, value, mask)
     # print("o",o)
     # print("o_ref",o_ref)
@@ -1175,10 +1150,11 @@ def do_bench_retention(attn, B, H, S, D, DV, dtype=torch.bfloat16):
     from tilelang.profiler import do_bench
 
     def run():
-        o = attn(query, key, value, mask)
+        attn(query, key, value, mask)
 
     def run_ref():
-        o = ref_program(query, key, value, mask)
+        ref_program(query, key, value, mask)
+
     # def run_bacward():
     #     o.backward(do, retain_graph=True)
 
@@ -1205,36 +1181,32 @@ def bench_retention_fwd(attn, B, H, S, D, DV, dtype=torch.bfloat16):
     torch.cuda.manual_seed(0)
     dtype = dtype
     device = "cuda"
-    accum_dtype = torch.float32
-    query = torch.randn(
-        B, S, H, D, device=device, dtype=dtype, requires_grad=True
-    ) * ((1 / D)**0.5)
-    key = torch.randn(
-        B, S, H, D, device=device, dtype=dtype, requires_grad=True
+    query = torch.randn(B, S, H, D, device=device, dtype=dtype, requires_grad=True) * (
+        (1 / D) ** 0.5
     )
-    value = torch.randn(
-        B, S, H, DV, device=device, dtype=dtype, requires_grad=True
+    key = torch.randn(B, S, H, D, device=device, dtype=dtype, requires_grad=True)
+    value = torch.randn(B, S, H, DV, device=device, dtype=dtype, requires_grad=True)
+    torch.randn(B, S, H, DV, device=device, dtype=dtype, requires_grad=True)
+    mask = (
+        torch.rand(1, H, S, S, device="cuda", dtype=dtype, requires_grad=False)
+        .tril()
+        .contiguous()
     )
-    do = torch.randn(
-        B, S, H, DV, device=device, dtype=dtype, requires_grad=True
-    )
-    mask = torch.rand(
-        1, H, S, S, device="cuda", dtype=dtype, requires_grad=False
-    ).tril().contiguous()
 
-    o = attn(query, key, value, mask)
+    attn(query, key, value, mask)
     # o.backward(do, retain_graph=True)
     # print(query.grad)
     # print(key.grad)
     # print(value.grad)
 
     def ref_program(query, key, value, mask):
-        qk = torch.einsum('bqhd,bkhd->bhqk', query, key)
+        qk = torch.einsum("bqhd,bkhd->bhqk", query, key)
         qkm = qk * mask
         r = qkm.detach().abs().sum(dim=-1, keepdim=True).clamp(min=1.0)
-        o = torch.einsum('bhqk,bkhd->bqhd', qkm / r, value)
+        o = torch.einsum("bhqk,bkhd->bqhd", qkm / r, value)
         return o.to(dtype=dtype)
-    o_ref = ref_program(query, key, value, mask)
+
+    ref_program(query, key, value, mask)
     # print("o",o)
     # print("o_ref",o_ref)
     # print_debug(o,o_ref,1e-2,1e-2)
@@ -1243,10 +1215,11 @@ def bench_retention_fwd(attn, B, H, S, D, DV, dtype=torch.bfloat16):
     from tilelang.profiler import do_bench
 
     def run():
-        o = attn(query, key, value, mask)
+        attn(query, key, value, mask)
 
     def run_ref():
-        o = ref_program(query, key, value, mask)
+        ref_program(query, key, value, mask)
+
     # def run_bacward():
     #     o.backward(do, retain_graph=True)
 
@@ -1272,8 +1245,20 @@ def bench_retention_fwd(attn, B, H, S, D, DV, dtype=torch.bfloat16):
     return output_dict
 
 
-def do_bench_attention(attn, B, H, S, D, DV, mod=None, dtype=torch.float16,
-                       seqlenq=None, require_grad=False, causal=True, groupnum=None):
+def do_bench_attention(
+    attn,
+    B,
+    H,
+    S,
+    D,
+    DV,
+    mod=None,
+    dtype=torch.float16,
+    seqlenq=None,
+    require_grad=False,
+    causal=True,
+    groupnum=None,
+):
     if seqlenq is None:
         seqlenq = S
     if groupnum is None:
@@ -1285,7 +1270,6 @@ def do_bench_attention(attn, B, H, S, D, DV, mod=None, dtype=torch.float16,
     torch.cuda.manual_seed(0)
     dtype = dtype
     device = "cuda"
-    accum_dtype = torch.float32
     enable_fa3 = True
     query = torch.randn(
         B, seqlenq, H, D, device=device, dtype=dtype, requires_grad=require_grad
@@ -1296,9 +1280,7 @@ def do_bench_attention(attn, B, H, S, D, DV, mod=None, dtype=torch.float16,
     value = torch.randn(
         B, S, groupnum, DV, device=device, dtype=dtype, requires_grad=require_grad
     )
-    do = torch.randn(
-        B, seqlenq, H, DV, device=device, dtype=dtype, requires_grad=False
-    )
+    do = torch.randn(B, seqlenq, H, DV, device=device, dtype=dtype, requires_grad=False)
 
     o = attn(query, key, value)
     if require_grad:
@@ -1322,18 +1304,22 @@ def do_bench_attention(attn, B, H, S, D, DV, mod=None, dtype=torch.float16,
 
     def fa3(dim_padded):
         if D < dim_padded:
-            query_padded = F.pad(query, (0, dim_padded - D), value=0.)
-            key_padded = F.pad(key, (0, dim_padded - D), value=0.)
+            query_padded = F.pad(query, (0, dim_padded - D), value=0.0)
+            key_padded = F.pad(key, (0, dim_padded - D), value=0.0)
         else:
             query_padded = query
             key_padded = key
         if DV < dim_padded:
-            value_padded = F.pad(value, (0, dim_padded - DV), value=0.)
+            value_padded = F.pad(value, (0, dim_padded - DV), value=0.0)
         else:
             value_padded = value
         o_ref = flash_attn_func_hopper(
-            query_padded, key_padded, value_padded, softmax_scale=(
-                1 / D)**0.5, causal=causal)
+            query_padded,
+            key_padded,
+            value_padded,
+            softmax_scale=(1 / D) ** 0.5,
+            causal=causal,
+        )
         if DV < dim_padded:
             o_ref = o_ref[:, :, :, :DV]
         return o_ref
@@ -1343,57 +1329,54 @@ def do_bench_attention(attn, B, H, S, D, DV, mod=None, dtype=torch.float16,
 
     try:
         from flash_attn import flash_attn_func
-    except:
+    except Exception:
+
         def flash_attn_func(query, key, value, softmax_scale, causal):
             dim = query.shape[-1]
             num_head_groups = query.shape[2] // key.shape[2]
             if softmax_scale is None:
-                softmax_scale = 1 / dim** 0.5
+                softmax_scale = 1 / dim**0.5
 
             query = rearrange(
-                query, 'b s (h g) d -> b s g h d',
-                g=num_head_groups)  # [batch_size, num_head_groups, groups, dim]
-            scores = einsum(query, key,
-            'b s g h d, b t h d -> b g h s t')
+                query, "b s (h g) d -> b s g h d", g=num_head_groups
+            )  # [batch_size, num_head_groups, groups, dim]
+            scores = einsum(query, key, "b s g h d, b t h d -> b g h s t")
             if causal:
                 seqlenq = query.shape[1]
                 seqlenk = key.shape[1]
-                mask = torch.tril(
-                    torch.ones(
-                        seqlenq, seqlenk, device=scores.device))
+                mask = torch.tril(torch.ones(seqlenq, seqlenk, device=scores.device))
                 mask = mask.unsqueeze(0).unsqueeze(0)
-                scores = scores.masked_fill(mask == 0, float('-inf'))
-            attention = F.softmax(
-                scores * softmax_scale, dim=-1)
+                scores = scores.masked_fill(mask == 0, float("-inf"))
+            attention = F.softmax(scores * softmax_scale, dim=-1)
 
-            out = einsum(attention, value,
-                 'b g h s t, b t h d -> b g h s d')
-            out = rearrange(out, 'b g h s d -> b s (h g) d') 
+            out = einsum(attention, value, "b g h s t, b t h d -> b g h s d")
+            out = rearrange(out, "b g h s d -> b s (h g) d")
             return out
-    
+
     dim_padded_fa2 = max(D, DV)
 
     def fa2(query, key, value, dim_padded):
         if D < dim_padded:
-            query_padded = F.pad(query, (0, dim_padded - D), value=0.)
-            key_padded = F.pad(key, (0, dim_padded - D), value=0.)
+            query_padded = F.pad(query, (0, dim_padded - D), value=0.0)
+            key_padded = F.pad(key, (0, dim_padded - D), value=0.0)
         else:
             query_padded = query
             key_padded = key
         if DV < dim_padded:
-            value_padded = F.pad(value, (0, dim_padded - DV), value=0.)
+            value_padded = F.pad(value, (0, dim_padded - DV), value=0.0)
         else:
             value_padded = value
         o_ref = flash_attn_func(
             query_padded,
             key_padded,
             value_padded,
-            softmax_scale=(
-                1 / D)**0.5,
-            causal=causal)
+            softmax_scale=(1 / D) ** 0.5,
+            causal=causal,
+        )
         if DV < dim_padded:
             o_ref = o_ref[:, :, :, :DV]
         return o_ref
+
     o_ref = fa2(query, key, value, dim_padded_fa2)
     print_debug(o, o_ref)
     if require_grad:
@@ -1403,8 +1386,9 @@ def do_bench_attention(attn, B, H, S, D, DV, mod=None, dtype=torch.float16,
         print_debug(value.grad, dV)
 
     from tilelang.profiler import do_bench
+
     def run():
-        o = attn(query, key, value)
+        attn(query, key, value)
 
     def run_ref():
         fa2(query, key, value, dim_padded_fa2)
@@ -1417,6 +1401,7 @@ def do_bench_attention(attn, B, H, S, D, DV, mod=None, dtype=torch.float16,
 
     def run_bacward_ref():
         o_ref.backward(do, retain_graph=True)
+
     o_reffa3 = fa3(dim_padded_fa3) if enable_fa3 else None
 
     def run_bacward_ref_fa3():
@@ -1425,6 +1410,7 @@ def do_bench_attention(attn, B, H, S, D, DV, mod=None, dtype=torch.float16,
     # do_bench(run)
     # do_bench(run_bacward)
     import tilelang as tl
+
     if mod:
         program = mod(B, H, S, D, DV, 64, 64, 2, 128)
         mod, params = tl.lower(program)
@@ -1457,8 +1443,19 @@ def do_bench_attention(attn, B, H, S, D, DV, mod=None, dtype=torch.float16,
             print("tflops: {:.2f}".format(bwd_tflops / latency_reffa3 * 1e-9))
 
 
-def do_bench_attention_bwd_fa2(attn, B, H, S, D, DV, mod=None,
-                               dtype=torch.float16, seqlenq=None, require_grad=False, causal=True):
+def do_bench_attention_bwd_fa2(
+    attn,
+    B,
+    H,
+    S,
+    D,
+    DV,
+    mod=None,
+    dtype=torch.float16,
+    seqlenq=None,
+    require_grad=False,
+    causal=True,
+):
     if seqlenq is None:
         seqlenq = S
     tflops = 2 * B * H * seqlenq * S * D + 2 * B * H * seqlenq * S * DV
@@ -1468,7 +1465,6 @@ def do_bench_attention_bwd_fa2(attn, B, H, S, D, DV, mod=None,
     torch.cuda.manual_seed(0)
     dtype = dtype
     device = "cuda"
-    accum_dtype = torch.float32
     query = torch.randn(
         B, seqlenq, H, D, device=device, dtype=dtype, requires_grad=require_grad
     )
@@ -1478,9 +1474,7 @@ def do_bench_attention_bwd_fa2(attn, B, H, S, D, DV, mod=None,
     value = torch.randn(
         B, S, H, DV, device=device, dtype=dtype, requires_grad=require_grad
     )
-    do = torch.randn(
-        B, seqlenq, H, DV, device=device, dtype=dtype, requires_grad=False
-    )
+    do = torch.randn(B, seqlenq, H, DV, device=device, dtype=dtype, requires_grad=False)
 
     o = attn(query, key, value)
     if require_grad:
@@ -1490,29 +1484,31 @@ def do_bench_attention_bwd_fa2(attn, B, H, S, D, DV, mod=None,
         dV, value.grad = value.grad.clone(), None
 
     from flash_attn import flash_attn_func
+
     dim_padded_fa2 = max(D, DV)
 
     def fa2(query, key, value, dim_padded):
         if D < dim_padded:
-            query_padded = F.pad(query, (0, dim_padded - D), value=0.)
-            key_padded = F.pad(key, (0, dim_padded - D), value=0.)
+            query_padded = F.pad(query, (0, dim_padded - D), value=0.0)
+            key_padded = F.pad(key, (0, dim_padded - D), value=0.0)
         else:
             query_padded = query
             key_padded = key
         if DV < dim_padded:
-            value_padded = F.pad(value, (0, dim_padded - DV), value=0.)
+            value_padded = F.pad(value, (0, dim_padded - DV), value=0.0)
         else:
             value_padded = value
         o_ref = flash_attn_func(
             query_padded,
             key_padded,
             value_padded,
-            softmax_scale=(
-                1 / D)**0.5,
-            causal=causal)
+            softmax_scale=(1 / D) ** 0.5,
+            causal=causal,
+        )
         if DV < dim_padded:
             o_ref = o_ref[:, :, :, :DV]
         return o_ref
+
     o_ref = fa2(query, key, value, dim_padded_fa2)
     print_debug(o, o_ref)
     if require_grad:
@@ -1524,7 +1520,7 @@ def do_bench_attention_bwd_fa2(attn, B, H, S, D, DV, mod=None,
     from tilelang.profiler import do_bench
 
     def run():
-        o = attn(query, key, value)
+        attn(query, key, value)
 
     def run_ref():
         fa2(query, key, value, dim_padded_fa2)
@@ -1559,19 +1555,10 @@ def bench_attention_fwd(attn, B, H, S, D, DV):
     torch.cuda.manual_seed(0)
     dtype = torch.float16
     device = "cuda"
-    accum_dtype = torch.float32
-    query = torch.randn(
-        B, S, H, D, device=device, dtype=dtype, requires_grad=True
-    )
-    key = torch.randn(
-        B, S, H, D, device=device, dtype=dtype, requires_grad=True
-    )
-    value = torch.randn(
-        B, S, H, DV, device=device, dtype=dtype, requires_grad=True
-    )
-    do = torch.randn(
-        B, S, H, DV, device=device, dtype=dtype, requires_grad=True
-    )
+    query = torch.randn(B, S, H, D, device=device, dtype=dtype, requires_grad=True)
+    key = torch.randn(B, S, H, D, device=device, dtype=dtype, requires_grad=True)
+    value = torch.randn(B, S, H, DV, device=device, dtype=dtype, requires_grad=True)
+    do = torch.randn(B, S, H, DV, device=device, dtype=dtype, requires_grad=True)
 
     o = attn(query, key, value)
     # print(o)
@@ -1584,65 +1571,67 @@ def bench_attention_fwd(attn, B, H, S, D, DV):
 
     DIM_HOPPER = [64, 128, 256]
     dim_padded_fa3 = list(filter(lambda x: x >= max(D, DV), DIM_HOPPER))
-    assert (len(dim_padded_fa3) > 0)
+    assert len(dim_padded_fa3) > 0
     dim_padded_fa3 = min(dim_padded_fa3)
 
     def fa3(dim_padded):
         if D < dim_padded:
-            query_padded = F.pad(query, (0, dim_padded - D), value=0.)
-            key_padded = F.pad(key, (0, dim_padded - D), value=0.)
+            query_padded = F.pad(query, (0, dim_padded - D), value=0.0)
+            key_padded = F.pad(key, (0, dim_padded - D), value=0.0)
         else:
             query_padded = query
             key_padded = key
         if DV < dim_padded:
-            value_padded = F.pad(value, (0, dim_padded - DV), value=0.)
+            value_padded = F.pad(value, (0, dim_padded - DV), value=0.0)
         else:
             value_padded = value
         o_ref = flash_attn_func_hopper(
             query_padded,
             key_padded,
             value_padded,
-            softmax_scale=(
-                1 / D)**0.5,
-            causal=True)[0]
+            softmax_scale=(1 / D) ** 0.5,
+            causal=True,
+        )[0]
         if DV < dim_padded:
             o_ref = o_ref[:, :, :, :DV]
         return o_ref
 
-    o_ref = fa3(dim_padded_fa3)
+    fa3(dim_padded_fa3)
     # print_debug(o,o_ref)
 
     from flash_attn import flash_attn_func
+
     dim_padded_fa2 = max(D, DV)
 
     def fa2(dim_padded):
         if D < dim_padded:
-            query_padded = F.pad(query, (0, dim_padded - D), value=0.)
-            key_padded = F.pad(key, (0, dim_padded - D), value=0.)
+            query_padded = F.pad(query, (0, dim_padded - D), value=0.0)
+            key_padded = F.pad(key, (0, dim_padded - D), value=0.0)
         else:
             query_padded = query
             key_padded = key
         if DV < dim_padded:
-            value_padded = F.pad(value, (0, dim_padded - DV), value=0.)
+            value_padded = F.pad(value, (0, dim_padded - DV), value=0.0)
         else:
             value_padded = value
         o_ref = flash_attn_func(
             query_padded,
             key_padded,
             value_padded,
-            softmax_scale=(
-                1 / D)**0.5,
-            causal=True)
+            softmax_scale=(1 / D) ** 0.5,
+            causal=True,
+        )
         if DV < dim_padded:
             o_ref = o_ref[:, :, :, :DV]
         return o_ref
-    o_ref = fa2(dim_padded_fa2)
+
+    fa2(dim_padded_fa2)
     # print_debug(o,o_ref)
 
     from tilelang.profiler import do_bench
 
     def run():
-        o = attn(query, key, value)
+        attn(query, key, value)
 
     def run_ref():
         fa2(dim_padded_fa2)
@@ -1689,7 +1678,6 @@ def do_bench_attention_128256(B, H, S, D, DV, dtype=torch.float16):
     torch.cuda.manual_seed(0)
     dtype = dtype
     device = "cuda"
-    accum_dtype = torch.float32
     require_grad = True
     query = torch.randn(
         B, S, H, D, device=device, dtype=dtype, requires_grad=require_grad
@@ -1700,55 +1688,54 @@ def do_bench_attention_128256(B, H, S, D, DV, dtype=torch.float16):
     value = torch.randn(
         B, S, H, DV, device=device, dtype=dtype, requires_grad=require_grad
     )
-    do = torch.randn(
-        B, S, H, DV, device=device, dtype=dtype, requires_grad=False
-    )
+    torch.randn(B, S, H, DV, device=device, dtype=dtype, requires_grad=False)
 
     from flash_attn_interface import flash_attn_func as flash_attn_func_hopper
     # from flash_attn import flash_attn_func as flash_attn_func_hopper
 
-    DIM_HOPPER = [64, 128, 256]
-    assert (D == 128 and DV == 256)
+    assert D == 128 and DV == 256
 
     def fa3_split():
         query_padded = query
         key_padded = key
         value1, value2 = torch.split(value, 128, dim=-1)
         o_ref1 = flash_attn_func_hopper(
-            query_padded, key_padded, value1, softmax_scale=(
-                1 / D)**0.5, causal=True)[0]
+            query_padded, key_padded, value1, softmax_scale=(1 / D) ** 0.5, causal=True
+        )[0]
         o_ref2 = flash_attn_func_hopper(
-            query_padded, key_padded, value2, softmax_scale=(
-                1 / D)**0.5, causal=True)[0]
+            query_padded, key_padded, value2, softmax_scale=(1 / D) ** 0.5, causal=True
+        )[0]
         o_ref = torch.cat([o_ref1, o_ref2], dim=-1)
         return o_ref
 
     o_ref3 = fa3_split()
 
     from flash_attn import flash_attn_func
+
     dim_padded_fa2 = max(D, DV)
 
     def fa2(dim_padded):
         if D < dim_padded:
-            query_padded = F.pad(query, (0, dim_padded - D), value=0.)
-            key_padded = F.pad(key, (0, dim_padded - D), value=0.)
+            query_padded = F.pad(query, (0, dim_padded - D), value=0.0)
+            key_padded = F.pad(key, (0, dim_padded - D), value=0.0)
         else:
             query_padded = query
             key_padded = key
         if DV < dim_padded:
-            value_padded = F.pad(value, (0, dim_padded - DV), value=0.)
+            value_padded = F.pad(value, (0, dim_padded - DV), value=0.0)
         else:
             value_padded = value
         o_ref = flash_attn_func(
             query_padded,
             key_padded,
             value_padded,
-            softmax_scale=(
-                1 / D)**0.5,
-            causal=True)
+            softmax_scale=(1 / D) ** 0.5,
+            causal=True,
+        )
         if DV < dim_padded:
             o_ref = o_ref[:, :, :, :DV]
         return o_ref
+
     o_ref = fa2(dim_padded_fa2)
     print_debug(o_ref, o_ref3)
 
@@ -1773,7 +1760,8 @@ def do_bench_attention_128256(B, H, S, D, DV, dtype=torch.float16):
 
 
 def do_bench_flex_attention(
-        attn, B, H, S, D, DV, dtype=torch.float16, require_grad=False):
+    attn, B, H, S, D, DV, dtype=torch.float16, require_grad=False
+):
     tflops = 2 * B * H * S * S * D + 2 * B * H * S * S * DV
     tflops = tflops * 0.5
     bwd_tflops = 4 * B * H * S * S * DV + 6 * B * H * S * S * D
@@ -1781,7 +1769,6 @@ def do_bench_flex_attention(
     torch.cuda.manual_seed(0)
     dtype = dtype
     device = "cuda"
-    accum_dtype = torch.float32
     require_grad = require_grad
     query = torch.randn(
         B, H, S, D, device=device, dtype=dtype, requires_grad=require_grad
@@ -1792,14 +1779,10 @@ def do_bench_flex_attention(
     value = torch.randn(
         B, H, S, DV, device=device, dtype=dtype, requires_grad=require_grad
     )
-    do = torch.randn(
-        B, H, S, DV, device=device, dtype=dtype, requires_grad=False
-    )
+    do = torch.randn(B, H, S, DV, device=device, dtype=dtype, requires_grad=False)
 
     from torch.nn.attention.flex_attention import (
-        _DEFAULT_SPARSE_BLOCK_SIZE,
         create_block_mask,
-        create_mask,
         flex_attention,
     )
 
@@ -1811,40 +1794,38 @@ def do_bench_flex_attention(
         block_mask = create_block_mask(score_mod, B, H, M, N, device=device)
         return block_mask
 
-    block_mask = create_block_mask_cached(
-        causal_mask, 1, 1, S, S, device=query.device)
+    block_mask = create_block_mask_cached(causal_mask, 1, 1, S, S, device=query.device)
     flex_attention = torch.compile(flex_attention, dynamic=False)
     # run = lambda: flex_attention(
     #     query, key, value, block_mask=block_mask
     # )
     DIM_HOPPER = [64, 128, 256]
     dim_padded_fa3 = list(filter(lambda x: x >= max(D, DV), DIM_HOPPER))
-    assert (len(dim_padded_fa3) > 0)
+    assert len(dim_padded_fa3) > 0
     dim_padded_fa3 = min(dim_padded_fa3)
 
     def fa3(dim_padded):
         if D < dim_padded:
-            query_padded = F.pad(query, (0, dim_padded - D), value=0.)
-            key_padded = F.pad(key, (0, dim_padded - D), value=0.)
+            query_padded = F.pad(query, (0, dim_padded - D), value=0.0)
+            key_padded = F.pad(key, (0, dim_padded - D), value=0.0)
         else:
             query_padded = query
             key_padded = key
         if DV < dim_padded:
-            value_padded = F.pad(value, (0, dim_padded - DV), value=0.)
+            value_padded = F.pad(value, (0, dim_padded - DV), value=0.0)
         else:
             value_padded = value
         o_ref = flex_attention(
-            query_padded,
-            key_padded,
-            value_padded,
-            block_mask=block_mask)
+            query_padded, key_padded, value_padded, block_mask=block_mask
+        )
         if DV < dim_padded:
             o_ref = o_ref[:, :, :, :DV]
         return o_ref
 
     o_ref = fa3(dim_padded_fa3)
 
-    def run(): return fa3(dim_padded_fa3)
+    def run():
+        return fa3(dim_padded_fa3)
 
     def run_bacward():
         o_ref.backward(do, retain_graph=True)
@@ -1869,17 +1850,16 @@ def do_bench_flashinfer(attn, B, H, S, D, DV, dtype=torch.float16):
     torch.cuda.manual_seed(0)
     dtype = dtype
     device = "cuda"
-    accum_dtype = torch.float32
     require_grad = False
 
     import flashinfer
     from flashinfer import prefill
+
     DIM_HOPPER = [64, 128, 256]
     dim_padded_fa3 = list(filter(lambda x: x >= max(D, DV), DIM_HOPPER))
-    assert (len(dim_padded_fa3) > 0)
+    assert len(dim_padded_fa3) > 0
     dim_padded_fa3 = min(dim_padded_fa3)
 
-    num_layers = 1  # 32
     num_qo_heads = H  # 64
     num_kv_heads = H  # 16
     head_dim = dim_padded_fa3  # 128
@@ -1898,10 +1878,22 @@ def do_bench_flashinfer(attn, B, H, S, D, DV, dtype=torch.float16):
         )
     elif B != 1:
         query = torch.randn(
-            B * S, H, dim_padded_fa3, device=device, dtype=dtype, requires_grad=require_grad
+            B * S,
+            H,
+            dim_padded_fa3,
+            device=device,
+            dtype=dtype,
+            requires_grad=require_grad,
         )
         kv_cache = torch.randn(
-            max_num_pages, 2, page_size, H, dim_padded_fa3, device=device, dtype=dtype, requires_grad=require_grad
+            max_num_pages,
+            2,
+            page_size,
+            H,
+            dim_padded_fa3,
+            device=device,
+            dtype=dtype,
+            requires_grad=require_grad,
         )
 
     # out = prefill.single_prefill_with_kv_cache(query, key, value, causal=True)
@@ -1911,7 +1903,8 @@ def do_bench_flashinfer(attn, B, H, S, D, DV, dtype=torch.float16):
     # allocate 128MB workspace buffer
     if B != 1:
         workspace_buffer = torch.empty(
-            128 * 1024 * 1024, dtype=torch.uint8, device=device)
+            128 * 1024 * 1024, dtype=torch.uint8, device=device
+        )
         prefill_wrapper = flashinfer.BatchPrefillWithPagedKVCacheWrapper(
             workspace_buffer, "NHD"
         )
@@ -1924,11 +1917,8 @@ def do_bench_flashinfer(attn, B, H, S, D, DV, dtype=torch.float16):
         #     [0, 17, 29, 44, 48, 66, 100, 128], dtype=torch.int32, device="cuda:0"
         # )
         paged_kv_indptr = torch.range(
-            0,
-            max_num_pages,
-            S // page_size,
-            dtype=torch.int32,
-            device=device)
+            0, max_num_pages, S // page_size, dtype=torch.int32, device=device
+        )
         # 1 <= paged_kv_last_page_len <= page_size
         # paged_kv_last_page_len = torch.tensor(
         #     [1, 7, 14, 4, 3, 1, 16], dtype=torch.int32, device="cuda:0"
@@ -1952,25 +1942,30 @@ def do_bench_flashinfer(attn, B, H, S, D, DV, dtype=torch.float16):
 
     def fa3(dim_padded):
         if D < dim_padded:
-            query_padded = F.pad(query, (0, dim_padded - D), value=0.)
-            key_padded = F.pad(key, (0, dim_padded - D), value=0.)
+            query_padded = F.pad(query, (0, dim_padded - D), value=0.0)
+            key_padded = F.pad(key, (0, dim_padded - D), value=0.0)
         else:
             query_padded = query
             key_padded = key
         if DV < dim_padded:
-            value_padded = F.pad(value, (0, dim_padded - DV), value=0.)
+            value_padded = F.pad(value, (0, dim_padded - DV), value=0.0)
         else:
             value_padded = value
         o_ref = prefill.single_prefill_with_kv_cache(
-            query_padded, key_padded, value_padded, causal=True)
+            query_padded, key_padded, value_padded, causal=True
+        )
         if DV < dim_padded:
             o_ref = o_ref[:, :, :DV]
         return o_ref
 
     if B == 1:
-        def run(): return fa3(dim_padded_fa3)
+
+        def run():
+            return fa3(dim_padded_fa3)
     else:
-        def run(): return prefill_wrapper.run(query, kv_cache)
+
+        def run():
+            return prefill_wrapper.run(query, kv_cache)
 
     # from tilelang.profiler import do_bench
 
@@ -1989,26 +1984,24 @@ def do_bench_sigmoid_flashinfer(attn, B, H, S, D, DV, dtype=torch.float16):
     torch.cuda.manual_seed(0)
     dtype = dtype
     device = "cuda"
-    accum_dtype = torch.float32
     require_grad = False
 
     import flashinfer
     import flashinfer.jit
-    from flashinfer import prefill
+
     DIM_HOPPER = [64, 128, 256]
     dim_padded_fa3 = list(filter(lambda x: x >= max(D, DV), DIM_HOPPER))
-    assert (len(dim_padded_fa3) > 0)
+    assert len(dim_padded_fa3) > 0
     dim_padded_fa3 = min(dim_padded_fa3)
 
     from flashinfer.jit.attention import (
-        gen_customize_single_prefill_module
+        gen_customize_single_prefill_module,
         # gen_customize_single_prefill_sm90_module as
         # gen_customize_single_prefill_module
     )
     from flashinfer.prefill import single_prefill_with_kv_cache_with_jit_module
     from flashinfer.utils import MaskMode
 
-    num_layers = 1  # 32
     num_qo_heads = H  # 64
     num_kv_heads = H  # 16
     head_dim = dim_padded_fa3  # 128
@@ -2069,10 +2062,8 @@ def do_bench_sigmoid_flashinfer(attn, B, H, S, D, DV, dtype=torch.float16):
         "FlashSigmoid",
         variant_decl,
     )
-    f = functools.partial(
-        single_prefill_with_kv_cache_with_jit_module,
-        jit_module)
-    assert (B == 1)
+    f = functools.partial(single_prefill_with_kv_cache_with_jit_module, jit_module)
+    assert B == 1
 
     if B == 1:
         query = torch.randn(
@@ -2086,20 +2077,33 @@ def do_bench_sigmoid_flashinfer(attn, B, H, S, D, DV, dtype=torch.float16):
         )
     elif B != 1:
         query = torch.randn(
-            B * S, H, dim_padded_fa3, device=device, dtype=dtype, requires_grad=require_grad
+            B * S,
+            H,
+            dim_padded_fa3,
+            device=device,
+            dtype=dtype,
+            requires_grad=require_grad,
         )
         kv_cache = torch.randn(
-            max_num_pages, 2, page_size, H, dim_padded_fa3, device=device, dtype=dtype, requires_grad=require_grad
+            max_num_pages,
+            2,
+            page_size,
+            H,
+            dim_padded_fa3,
+            device=device,
+            dtype=dtype,
+            requires_grad=require_grad,
         )
     logits_scale = 1.0 / math.sqrt(head_dim)
     sigmoid_bias = 0.25
-    o = f(
+    f(
         query,
         key,
         value,
         logits_scale,
         sigmoid_bias,
-        mask_mode=MaskMode.NON_CAUSAL.value)
+        mask_mode=MaskMode.NON_CAUSAL.value,
+    )
 
     # out = prefill.single_prefill_with_kv_cache(query, key, value, causal=True)
     # run = lambda: prefill.single_prefill_with_kv_cache(
@@ -2108,7 +2112,8 @@ def do_bench_sigmoid_flashinfer(attn, B, H, S, D, DV, dtype=torch.float16):
     # allocate 128MB workspace buffer
     if B != 1:
         workspace_buffer = torch.empty(
-            128 * 1024 * 1024, dtype=torch.uint8, device=device)
+            128 * 1024 * 1024, dtype=torch.uint8, device=device
+        )
         prefill_wrapper = flashinfer.BatchPrefillWithPagedKVCacheWrapper(
             workspace_buffer, "NHD"
         )
@@ -2121,11 +2126,8 @@ def do_bench_sigmoid_flashinfer(attn, B, H, S, D, DV, dtype=torch.float16):
         #     [0, 17, 29, 44, 48, 66, 100, 128], dtype=torch.int32, device="cuda:0"
         # )
         paged_kv_indptr = torch.range(
-            0,
-            max_num_pages,
-            S // page_size,
-            dtype=torch.int32,
-            device=device)
+            0, max_num_pages, S // page_size, dtype=torch.int32, device=device
+        )
         # 1 <= paged_kv_last_page_len <= page_size
         # paged_kv_last_page_len = torch.tensor(
         #     [1, 7, 14, 4, 3, 1, 16], dtype=torch.int32, device="cuda:0"
@@ -2149,13 +2151,13 @@ def do_bench_sigmoid_flashinfer(attn, B, H, S, D, DV, dtype=torch.float16):
 
     def fa3(dim_padded):
         if D < dim_padded:
-            query_padded = F.pad(query, (0, dim_padded - D), value=0.)
-            key_padded = F.pad(key, (0, dim_padded - D), value=0.)
+            query_padded = F.pad(query, (0, dim_padded - D), value=0.0)
+            key_padded = F.pad(key, (0, dim_padded - D), value=0.0)
         else:
             query_padded = query
             key_padded = key
         if DV < dim_padded:
-            value_padded = F.pad(value, (0, dim_padded - DV), value=0.)
+            value_padded = F.pad(value, (0, dim_padded - DV), value=0.0)
         else:
             value_padded = value
         o_ref = f(
@@ -2164,15 +2166,20 @@ def do_bench_sigmoid_flashinfer(attn, B, H, S, D, DV, dtype=torch.float16):
             value_padded,
             logits_scale,
             sigmoid_bias,
-            mask_mode=MaskMode.NON_CAUSAL.value)
+            mask_mode=MaskMode.NON_CAUSAL.value,
+        )
         if DV < dim_padded:
             o_ref = o_ref[:, :, :DV]
         return o_ref
 
     if B == 1:
-        def run(): return fa3(dim_padded_fa3)
+
+        def run():
+            return fa3(dim_padded_fa3)
     else:
-        def run(): return prefill_wrapper.run(query, kv_cache)
+
+        def run():
+            return prefill_wrapper.run(query, kv_cache)
 
     # from tilelang.profiler import do_bench
 

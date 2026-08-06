@@ -6,45 +6,71 @@ This repository contains the artifacts for the PPoPP'26 Artifact Evaluation of p
 
 MetaAttention provides users with pythonic interface to define customized attention flexibly and automatically generate device code with high performance. Examples of various attention mechanisms (e.g., softmax attention, RetNet, Mamba2, MLA) are provided in the examples/ folder.
 
-
 # 1. Getting Started Guide
 
-This section guides you through setting up the environment and running a example to verify functionality.
+This section covers the supported quickstart paths on the `feat/quickstart` branch.
 
 ## Hardware Requirements
 
-To reproduce the results in the paper, specific hardware is required:
+To run generated kernels, you still need a supported GPU runtime:
 
-- 1x NVIDIA Hopper GPU
-
-, or
-
+- 1x NVIDIA Hopper GPU, or
 - 1x AMD MI200 Series GPU
 
+`uv pip install -e .` now works on this branch. The editable install exposes the project packages (`attn_engine`, `core`, `autotuner`, `benchmark`) directly, so local development no longer depends on setting `PYTHONPATH` by hand.
 
-## Prepare Docker Environment
+## Local Quickstart with `uv`
 
-To ease the process of installing all the dependencies, baseline software, and MetaAttention code, we provide a Dockerfile and a simple guideline to build a Docker image with all of above installed.
+Use this path if you already have a working Python environment and a PyTorch build that matches your target runtime (CUDA, ROCm, or CPU) on the host machine.
 
-### For NVIDIA GPU
+### Install
+
 ```bash
-# clone the repo or use the archive we provided
-git clone https://github.com/smallscientist1/AttentionEngineFork.git AttentionEngine --recursive -b ppopp_AE
-cd AttentionEngine/docker
-# take about 50 minutes
-docker build -t metaattn_cuda -f Dockerfile.cu128 .
-
-docker run -it --gpus all --name metaattn-AE --ipc=host --ulimit memlock=-1 --ulimit stack=67108864 -v $(pwd)/..:/AttentionEngine metaattn_cuda
-
-cd /AttentionEngine
+uv venv --python 3.12
+. .venv/bin/activate
+# install a platform-appropriate PyTorch build first
+uv pip install torch
+# then install this project without re-resolving torch
+uv pip install --no-deps -e .
 ```
 
-### For AMD GPU
+This installs MetaAttention itself from the local checkout. PyTorch is intentionally host-selected so CUDA, ROCm, and CPU environments can provide their own compatible build, and `--no-deps` avoids replacing that choice during editable install.
+
+### Verify the installation
 ```bash
-git clone https://github.com/smallscientist1/AttentionEngineFork.git AttentionEngine --recursive -b ppopp_AE
-cd AttentionEngine/docker
-# take about 80 minites on a 32-core machine
-docker build -t metaattn_rocm -f Dockerfile.rocm .
+# run from the repo root
+python examples/retention_parallel.py
+```
+
+Expected output includes `AttentionEngine Succuessfully created.`
+
+Notes:
+
+- The example needs a working GPU runtime. On this workstation, the script fails before kernel generation if no NVIDIA driver is present.
+- The editable install was validated by importing `attn_engine`, `core`, `autotuner`, and `benchmark` after `uv pip install --no-deps -e .`.
+
+## Docker Quickstart
+
+Use Docker if you want a reproducible environment with the heavyweight dependencies preinstalled.
+
+### NVIDIA GPU
+
+```bash
+# takes about 50 minutes
+docker build -t metaattn_cuda -f docker/Dockerfile.cu128 .
+
+docker run -it --gpus all --name metaattn-cuda \
+  --ipc=host \
+  --ulimit memlock=-1 \
+  --ulimit stack=67108864 \
+  metaattn_cuda
+```
+
+### AMD GPU
+
+```bash
+# takes about 80 minutes on a 32-core machine
+docker build -t metaattn_rocm -f docker/Dockerfile.rocm .
 
 docker run -it \
   --device=/dev/kfd \
@@ -54,20 +80,16 @@ docker run -it \
   --shm-size 8G \
   --cap-add=SYS_PTRACE \
   --security-opt seccomp=unconfined \
-  -v $(pwd)/..:/AttentionEngine \
   metaattn_rocm
-
-cd /AttentionEngine
 ```
 
-## Running Example
-
-Inside the Docker container, run the following script to execute the RetNet Attention example (corresponding to Fig 5 and Fig 7 in Section 3 of the paper). This verifies that the installation is successful and the system can generate/run kernels.
+Inside either container, the repository is already installed in editable mode. Run:
 ```bash
-# expect < 2 minutes
-python examples/retention_parallel.py 
+cd /workspace/MetaAttention
+python examples/retention_parallel.py
 ```
-**Expected Output**: The script should print AttentionEngine Succuessfully created.
+
+Expected output includes `AttentionEngine Succuessfully created.`
 
 # 2. Step-by-Step Instructions
 
@@ -88,7 +110,7 @@ This script runs tests for parallel and recurrent patterns against reference imp
 We consider Figure 11 and Figure 14 to be the key results of our paper, demonstrating the performance of MetaAttention-generated operators on hardware.
 The following are the steps to replicate these experiments.
 
-**Note for reproducing the result**: 
+**Note for reproducing the result**:
 Baseline libraries (e.g., FlashAttention, FlashLinearAttention) are frequently updated, thus slight variations in performance numbers compared to the static plots in the paper are expected. However, the overall conclusion should remain consistent: MetaAttention achieves performance comparable to hand-written libraries and better than native PyTorch.
 
 
@@ -115,4 +137,3 @@ Run the following command:
 python testing/benchmark_mi250.py
 ```
 The figure will be saved as `./figure14_mi250.pdf`.
-
