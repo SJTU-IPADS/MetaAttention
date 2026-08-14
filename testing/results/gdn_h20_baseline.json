@@ -12,10 +12,16 @@
   },
   "warmup": 25,
   "repetitions": 100,
-  "first_compile_ms": 94.43695202935487,
-  "kernel_ms": 3.1579251289367676,
-  "end_to_end_ms": 39.595375061035156,
-  "peak_allocated_bytes": 288457216,
+  "first_compile_ms": 9193.047314998694,
+  "forward_stage_ms": {
+    "gate_cumsum": 0.01737522892653942,
+    "kkt": 21.880046844482422,
+    "wy": 14.88980770111084,
+    "state_output": 633.0905151367188
+  },
+  "staged_forward_ms": 669.8777449112386,
+  "end_to_end_ms": 672.2598266601562,
+  "peak_allocated_bytes": 301072896,
   "hardware": "NVIDIA H20",
   "compute_capability": [
     9,

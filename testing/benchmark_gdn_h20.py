@@ -39,13 +39,45 @@ def benchmark(device: torch.device) -> dict[str, object]:
     engine(query, key, value, gate, beta)
     torch.cuda.synchronize(device_index)
     compile_ms = (time.perf_counter() - started) * 1e3
+    gate_cumsum_kernel = _compile_gate_cumsum(batch, hv, length)
+    kkt_kernel = _compile_kkt(batch, hq, hv, length)
+    wy_kernel = _compile_wy(batch, hq, hv, length)
     state_kernel = _compile_state_output(batch, hq, hv, length, 128**-0.5, False)
     zero_state = torch.zeros(batch, hv, dim, dim, device=device, dtype=torch.float32)
-    kernel_ms = do_bench(
-        lambda: state_kernel(query, key, value, gate, beta, zero_state),
-        warmup=WARMUP,
-        rep=REPETITIONS,
+    cumulative_gate = gate_cumsum_kernel(gate)
+    key_inverse, value_inverse = kkt_kernel(key, beta, cumulative_gate)
+    corrected_key, corrected_value = wy_kernel(
+        key, value, beta, cumulative_gate, key_inverse, value_inverse
     )
+    forward_stage_ms = {
+        "gate_cumsum": do_bench(
+            lambda: gate_cumsum_kernel(gate), warmup=WARMUP, rep=REPETITIONS
+        ),
+        "kkt": do_bench(
+            lambda: kkt_kernel(key, beta, cumulative_gate),
+            warmup=WARMUP,
+            rep=REPETITIONS,
+        ),
+        "wy": do_bench(
+            lambda: wy_kernel(
+                key, value, beta, cumulative_gate, key_inverse, value_inverse
+            ),
+            warmup=WARMUP,
+            rep=REPETITIONS,
+        ),
+        "state_output": do_bench(
+            lambda: state_kernel(
+                query,
+                key,
+                cumulative_gate,
+                corrected_key,
+                corrected_value,
+                zero_state,
+            ),
+            warmup=WARMUP,
+            rep=REPETITIONS,
+        ),
+    }
     end_to_end_ms = do_bench(
         lambda: engine(query, key, value, gate, beta),
         warmup=WARMUP,
@@ -57,7 +89,8 @@ def benchmark(device: torch.device) -> dict[str, object]:
         "warmup": WARMUP,
         "repetitions": REPETITIONS,
         "first_compile_ms": compile_ms,
-        "kernel_ms": kernel_ms,
+        "forward_stage_ms": forward_stage_ms,
+        "staged_forward_ms": sum(forward_stage_ms.values()),
         "end_to_end_ms": end_to_end_ms,
         "peak_allocated_bytes": torch.cuda.max_memory_allocated(device_index),
         "hardware": torch.cuda.get_device_name(device_index),

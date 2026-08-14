@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import csv
+import json
 import os
 from collections import Counter
 from pathlib import Path
@@ -217,3 +218,13 @@ def test_synthetic_benchmark_artifacts_have_metaattention_rows(tmp_path):
     result_dir = tmp_path / "artifacts"
     _write_synthetic_csvs(result_dir, H100_FILES)
     _assert_metaattention_rows(tuple(sorted(result_dir.glob("*.csv"))))
+
+
+def test_gdn_baseline_reports_complete_staged_forward():
+    baseline_path = Path("testing/results/gdn_h20_baseline.json")
+    payload = json.loads(baseline_path.read_text(encoding="utf-8"))
+    stages = payload["forward_stage_ms"]
+    assert set(stages) == {"gate_cumsum", "kkt", "wy", "state_output"}
+    assert all(value > 0 for value in stages.values())
+    assert payload["staged_forward_ms"] == pytest.approx(sum(stages.values()))
+    assert payload["end_to_end_ms"] > 0

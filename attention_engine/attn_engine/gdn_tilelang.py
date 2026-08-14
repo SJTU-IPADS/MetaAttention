@@ -28,12 +28,14 @@ def _compile_gate_cumsum(batch: int, value_heads: int, length: int):
     ):
         with T.Kernel(batch * value_heads, threads=THREADS) as batch_head:
             running = T.alloc_fragment((1,), "float32")
-            running[0] = 0.0
             batch_index = batch_head // value_heads
             value_head = batch_head % value_heads
-            for token in T.serial(length):
-                running[0] = running[0] + gate[batch_index, value_head, token]
-                cumulative_gate[batch_index, value_head, token] = running[0]
+            for chunk in T.serial(length // CHUNK_SIZE):
+                running[0] = 0.0
+                for offset in T.serial(CHUNK_SIZE):
+                    token = chunk * CHUNK_SIZE + offset
+                    running[0] = running[0] + gate[batch_index, value_head, token]
+                    cumulative_gate[batch_index, value_head, token] = running[0]
 
     return tl.compile(
         gate_cumsum_kernel,
@@ -183,50 +185,92 @@ def _compile_state_output(
     def state_output_kernel(
         query: T.Tensor((batch, query_heads, length, HEAD_DIM), "bfloat16"),
         key: T.Tensor((batch, query_heads, length, HEAD_DIM), "bfloat16"),
-        value: T.Tensor((batch, value_heads, length, HEAD_DIM), "bfloat16"),
-        gate: T.Tensor((batch, value_heads, length), "float32"),
-        beta: T.Tensor((batch, value_heads, length), "float32"),
+        cumulative_gate: T.Tensor((batch, value_heads, length), "float32"),
+        corrected_key: T.Tensor((batch, value_heads, length, HEAD_DIM), "float32"),
+        corrected_value: T.Tensor((batch, value_heads, length, HEAD_DIM), "float32"),
         initial_state: T.Tensor((batch, value_heads, HEAD_DIM, HEAD_DIM), "float32"),
         output: T.Tensor((batch, value_heads, length, HEAD_DIM), "bfloat16"),
         final_state: T.Tensor(final_shape, "float32"),
     ):
         with T.Kernel(VALUE_TILES, batch * value_heads, threads=THREADS) as (tile, batch_head):
             state = T.alloc_fragment((HEAD_DIM, VALUE_TILE), "float32")
-            prediction = T.alloc_fragment((VALUE_TILE,), "float32")
-            residual = T.alloc_fragment((VALUE_TILE,), "float32")
-            output_value = T.alloc_fragment((VALUE_TILE,), "float32")
+            new_value = T.alloc_fragment((CHUNK_SIZE, VALUE_TILE), "float32")
             batch_index = batch_head // value_heads
             value_head = batch_head % value_heads
             query_head = value_head // groups
             for state_dim, state_column in T.Parallel(HEAD_DIM, VALUE_TILE):
-                state[state_dim, state_column] = initial_state[batch_index, value_head, state_dim, tile * VALUE_TILE + state_column]
-            for token in T.serial(length):
-                decay = T.exp(gate[batch_index, value_head, token])
-                for state_dim, state_column in T.Parallel(HEAD_DIM, VALUE_TILE):
-                    state[state_dim, state_column] = state[state_dim, state_column] * decay
-                for output_column in T.Parallel(VALUE_TILE):
-                    prediction[output_column] = 0.0
-                for state_dim in T.serial(HEAD_DIM):
-                    key_value = T.cast(key[batch_index, query_head, token, state_dim], "float32")
-                    for output_column in T.Parallel(VALUE_TILE):
-                        prediction[output_column] = prediction[output_column] + key_value * state[state_dim, output_column]
-                for output_column in T.Parallel(VALUE_TILE):
-                    residual[output_column] = beta[batch_index, value_head, token] * (T.cast(value[batch_index, value_head, token, tile * VALUE_TILE + output_column], "float32") - prediction[output_column])
-                for state_dim in T.serial(HEAD_DIM):
-                    key_value = T.cast(key[batch_index, query_head, token, state_dim], "float32")
-                    for state_column in T.Parallel(VALUE_TILE):
-                        state[state_dim, state_column] = state[state_dim, state_column] + key_value * residual[state_column]
-                for output_column in T.Parallel(VALUE_TILE):
-                    output_value[output_column] = 0.0
-                for state_dim in T.serial(HEAD_DIM):
-                    query_value = T.cast(query[batch_index, query_head, token, state_dim], "float32") * scale
-                    for output_column in T.Parallel(VALUE_TILE):
-                        output_value[output_column] = output_value[output_column] + query_value * state[state_dim, output_column]
-                for output_column in T.Parallel(VALUE_TILE):
-                    output[batch_index, value_head, token, tile * VALUE_TILE + output_column] = T.cast(output_value[output_column], "bfloat16")
+                state[state_dim, state_column] = initial_state[
+                    batch_index, value_head, state_dim, tile * VALUE_TILE + state_column
+                ]
+
+            for chunk in T.serial(length // CHUNK_SIZE):
+                chunk_start = chunk * CHUNK_SIZE
+                for row in T.serial(CHUNK_SIZE):
+                    token = chunk_start + row
+                    row_gate = T.exp(cumulative_gate[batch_index, value_head, token])
+                    for column in T.serial(VALUE_TILE):
+                        correction = T.alloc_fragment((1,), "float32")
+                        correction[0] = 0.0
+                        for dim in T.serial(HEAD_DIM):
+                            correction[0] = correction[0] + corrected_key[
+                                batch_index, value_head, token, dim
+                            ] * row_gate * state[dim, column]
+                        new_value[row, column] = corrected_value[
+                            batch_index, value_head, token, tile * VALUE_TILE + column
+                        ] - correction[0]
+
+                for row in T.serial(CHUNK_SIZE):
+                    token = chunk_start + row
+                    row_gate = cumulative_gate[batch_index, value_head, token]
+                    for column in T.serial(VALUE_TILE):
+                        result = T.alloc_fragment((1,), "float32")
+                        result[0] = 0.0
+                        for dim in T.serial(HEAD_DIM):
+                            result[0] = result[0] + T.cast(
+                                query[batch_index, query_head, token, dim], "float32"
+                            ) * T.exp(row_gate) * state[dim, column]
+                        for source_row in T.serial(row + 1):
+                            source = chunk_start + source_row
+                            score = T.alloc_fragment((1,), "float32")
+                            score[0] = 0.0
+                            for dim in T.serial(HEAD_DIM):
+                                score[0] = score[0] + T.cast(
+                                    query[batch_index, query_head, token, dim], "float32"
+                                ) * T.cast(
+                                    key[batch_index, query_head, source, dim], "float32"
+                                )
+                            result[0] = result[0] + score[0] * T.exp(
+                                row_gate
+                                - cumulative_gate[batch_index, value_head, source]
+                            ) * new_value[source_row, column]
+                        output[
+                            batch_index, value_head, token, tile * VALUE_TILE + column
+                        ] = T.cast(result[0] * scale, "bfloat16")
+
+                chunk_gate = cumulative_gate[
+                    batch_index, value_head, chunk_start + CHUNK_SIZE - 1
+                ]
+                for dim, column in T.Parallel(HEAD_DIM, VALUE_TILE):
+                    state[dim, column] = state[dim, column] * T.exp(chunk_gate)
+                for source_row in T.serial(CHUNK_SIZE):
+                    source = chunk_start + source_row
+                    source_decay = T.exp(
+                        chunk_gate - cumulative_gate[batch_index, value_head, source]
+                    )
+                    for dim in T.serial(HEAD_DIM):
+                        key_value = T.cast(
+                            key[batch_index, query_head, source, dim], "float32"
+                        ) * source_decay
+                        for column in T.Parallel(VALUE_TILE):
+                            state[dim, column] = (
+                                state[dim, column] + key_value * new_value[source_row, column]
+                            )
+
             if store_final_state:
                 for state_dim, state_column in T.Parallel(HEAD_DIM, VALUE_TILE):
-                    final_state[batch_index, value_head, state_dim, tile * VALUE_TILE + state_column] = state[state_dim, state_column]
+                    final_state[
+                        batch_index, value_head, state_dim, tile * VALUE_TILE + state_column
+                    ] = state[state_dim, state_column]
 
     return tl.compile(
         state_output_kernel,
@@ -321,139 +365,190 @@ def _compile_backward(batch: int, query_heads: int, value_heads: int, length: in
                     batch_index, value_head, grad_dim, tile * VALUE_TILE + grad_column
                 ]
 
-            for reverse_index in T.serial(length):
-                token = length - reverse_index - 1
-                decay = T.exp(gate[batch_index, value_head, token])
-                chunk = token // CHUNK_SIZE
+            for reverse_chunk in T.serial(length // CHUNK_SIZE):
+                chunk = length // CHUNK_SIZE - reverse_chunk - 1
                 chunk_start = chunk * CHUNK_SIZE
-                for state_dim, state_column in T.Parallel(HEAD_DIM, VALUE_TILE):
-                    state[state_dim, state_column] = chunk_states[
-                        batch_index,
-                        value_head,
-                        chunk,
-                        state_dim,
-                        tile * VALUE_TILE + state_column,
-                    ]
-                for replay in T.serial(CHUNK_SIZE):
-                    if chunk_start + replay < token:
-                        replay_token = chunk_start + replay
-                        replay_decay = T.exp(gate[batch_index, value_head, replay_token])
-                        for replay_dim, replay_column in T.Parallel(HEAD_DIM, VALUE_TILE):
-                            state[replay_dim, replay_column] = state[replay_dim, replay_column] * replay_decay
-                        for prediction_column in T.Parallel(VALUE_TILE):
-                            prediction[prediction_column] = 0.0
-                        for replay_dim in T.serial(HEAD_DIM):
-                            key_value = T.cast(key[batch_index, query_head, replay_token, replay_dim], "float32")
+                for reverse_offset in T.serial(CHUNK_SIZE):
+                    offset = CHUNK_SIZE - reverse_offset - 1
+                    token = chunk_start + offset
+                    decay = T.exp(gate[batch_index, value_head, token])
+                    for state_dim, state_column in T.Parallel(HEAD_DIM, VALUE_TILE):
+                        state[state_dim, state_column] = chunk_states[
+                            batch_index,
+                            value_head,
+                            chunk,
+                            state_dim,
+                            tile * VALUE_TILE + state_column,
+                        ]
+                    for replay in T.serial(CHUNK_SIZE):
+                        if replay < offset:
+                            replay_token = chunk_start + replay
+                            replay_decay = T.exp(gate[batch_index, value_head, replay_token])
+                            for replay_dim, replay_column in T.Parallel(HEAD_DIM, VALUE_TILE):
+                                state[replay_dim, replay_column] = (
+                                    state[replay_dim, replay_column] * replay_decay
+                                )
                             for prediction_column in T.Parallel(VALUE_TILE):
-                                prediction[prediction_column] = prediction[prediction_column] + key_value * state[replay_dim, prediction_column]
-                        for residual_column in T.Parallel(VALUE_TILE):
-                            residual[residual_column] = beta[batch_index, value_head, replay_token] * (
-                                T.cast(
-                                    value[batch_index, value_head, replay_token, tile * VALUE_TILE + residual_column],
+                                prediction[prediction_column] = 0.0
+                            for replay_dim in T.serial(HEAD_DIM):
+                                key_value = T.cast(
+                                    key[batch_index, query_head, replay_token, replay_dim],
                                     "float32",
                                 )
-                                - prediction[residual_column]
-                            )
-                        for replay_dim in T.serial(HEAD_DIM):
-                            key_value = T.cast(key[batch_index, query_head, replay_token, replay_dim], "float32")
+                                for prediction_column in T.Parallel(VALUE_TILE):
+                                    prediction[prediction_column] = (
+                                        prediction[prediction_column]
+                                        + key_value * state[replay_dim, prediction_column]
+                                    )
                             for residual_column in T.Parallel(VALUE_TILE):
-                                state[replay_dim, residual_column] = state[replay_dim, residual_column] + key_value * residual[residual_column]
-                for dim, column in T.Parallel(HEAD_DIM, VALUE_TILE):
-                    state[dim, column] = state[dim, column] * decay
-                for column in T.Parallel(VALUE_TILE):
-                    prediction[column] = 0.0
-                for dim in T.serial(HEAD_DIM):
-                    key_value = T.cast(key[batch_index, query_head, token, dim], "float32")
+                                residual[residual_column] = beta[
+                                    batch_index, value_head, replay_token
+                                ] * (
+                                    T.cast(
+                                        value[
+                                            batch_index,
+                                            value_head,
+                                            replay_token,
+                                            tile * VALUE_TILE + residual_column,
+                                        ],
+                                        "float32",
+                                    )
+                                    - prediction[residual_column]
+                                )
+                            for replay_dim in T.serial(HEAD_DIM):
+                                key_value = T.cast(
+                                    key[batch_index, query_head, replay_token, replay_dim],
+                                    "float32",
+                                )
+                                for residual_column in T.Parallel(VALUE_TILE):
+                                    state[replay_dim, residual_column] = (
+                                        state[replay_dim, residual_column]
+                                        + key_value * residual[residual_column]
+                                    )
+                    for dim, column in T.Parallel(HEAD_DIM, VALUE_TILE):
+                        state[dim, column] = state[dim, column] * decay
                     for column in T.Parallel(VALUE_TILE):
-                        prediction[column] = prediction[column] + key_value * state[dim, column]
-                for column in T.Parallel(VALUE_TILE):
-                    residual[column] = beta[batch_index, value_head, token] * (
-                        T.cast(
-                            value[
-                                batch_index,
-                                value_head,
-                                token,
-                                tile * VALUE_TILE + column,
-                            ],
-                            "float32",
+                        prediction[column] = 0.0
+                    for dim in T.serial(HEAD_DIM):
+                        key_value = T.cast(
+                            key[batch_index, query_head, token, dim], "float32"
                         )
-                        - prediction[column]
-                    )
-                for dim, column in T.Parallel(HEAD_DIM, VALUE_TILE):
-                    state[dim, column] = state[dim, column] + T.cast(
-                        key[batch_index, query_head, token, dim], "float32"
-                    ) * residual[column]
-
-                for dim in T.serial(HEAD_DIM):
-                    query_part = T.alloc_fragment((1,), "float32")
-                    query_part[0] = 0.0
-                    for column in T.serial(VALUE_TILE):
-                        output_gradient = T.cast(
-                            output_grad[
-                                batch_index,
-                                value_head,
-                                token,
-                                tile * VALUE_TILE + column,
-                            ],
-                            "float32",
-                        )
-                        query_part[0] = query_part[0] + state[dim, column] * output_gradient * scale
-                        state_grad[dim, column] = state_grad[dim, column] + T.cast(
-                            query[batch_index, query_head, token, dim], "float32"
-                        ) * scale * output_gradient
-                    query_grad_parts[
-                        batch_index, value_head, token, dim, tile
-                    ] = query_part[0]
-
-                for column in T.Parallel(VALUE_TILE):
-                    residual_grad[column] = 0.0
-                for dim in T.serial(HEAD_DIM):
-                    key_value = T.cast(key[batch_index, query_head, token, dim], "float32")
+                        for column in T.Parallel(VALUE_TILE):
+                            prediction[column] = (
+                                prediction[column] + key_value * state[dim, column]
+                            )
                     for column in T.Parallel(VALUE_TILE):
-                        residual_grad[column] = residual_grad[column] + key_value * state_grad[dim, column]
-                beta_part = T.alloc_fragment((1,), "float32")
-                beta_part[0] = 0.0
-                for column in T.serial(VALUE_TILE):
-                    beta_part[0] = beta_part[0] + residual_grad[column] * (
-                        T.cast(
-                            value[
-                                batch_index,
-                                value_head,
-                                token,
-                                tile * VALUE_TILE + column,
-                            ],
-                            "float32",
+                        residual[column] = beta[batch_index, value_head, token] * (
+                            T.cast(
+                                value[
+                                    batch_index,
+                                    value_head,
+                                    token,
+                                    tile * VALUE_TILE + column,
+                                ],
+                                "float32",
+                            )
+                            - prediction[column]
                         )
-                        - prediction[column]
-                    )
-                    value_grad[
-                        batch_index,
-                        value_head,
-                        token,
-                        tile * VALUE_TILE + column,
-                    ] = residual_grad[column] * beta[batch_index, value_head, token]
-                    prediction_grad[column] = -residual_grad[column] * beta[
-                        batch_index, value_head, token
-                    ]
-                beta_grad_parts[batch_index, value_head, token, tile] = beta_part[0]
+                    for dim, column in T.Parallel(HEAD_DIM, VALUE_TILE):
+                        state[dim, column] = state[dim, column] + T.cast(
+                            key[batch_index, query_head, token, dim], "float32"
+                        ) * residual[column]
 
-                gate_part = T.alloc_fragment((1,), "float32")
-                gate_part[0] = 0.0
-                for dim in T.serial(HEAD_DIM):
-                    key_part = T.alloc_fragment((1,), "float32")
-                    key_part[0] = 0.0
-                    key_value = T.cast(key[batch_index, query_head, token, dim], "float32")
+                    for dim in T.serial(HEAD_DIM):
+                        query_part = T.alloc_fragment((1,), "float32")
+                        query_part[0] = 0.0
+                        for column in T.serial(VALUE_TILE):
+                            output_gradient = T.cast(
+                                output_grad[
+                                    batch_index,
+                                    value_head,
+                                    token,
+                                    tile * VALUE_TILE + column,
+                                ],
+                                "float32",
+                            )
+                            query_part[0] = (
+                                query_part[0]
+                                + state[dim, column] * output_gradient * scale
+                            )
+                            state_grad[dim, column] = (
+                                state_grad[dim, column]
+                                + T.cast(
+                                    query[batch_index, query_head, token, dim], "float32"
+                                )
+                                * scale
+                                * output_gradient
+                            )
+                        query_grad_parts[
+                            batch_index, value_head, token, dim, tile
+                        ] = query_part[0]
+
+                    for column in T.Parallel(VALUE_TILE):
+                        residual_grad[column] = 0.0
+                    for dim in T.serial(HEAD_DIM):
+                        key_value = T.cast(
+                            key[batch_index, query_head, token, dim], "float32"
+                        )
+                        for column in T.Parallel(VALUE_TILE):
+                            residual_grad[column] = (
+                                residual_grad[column] + key_value * state_grad[dim, column]
+                            )
+                    beta_part = T.alloc_fragment((1,), "float32")
+                    beta_part[0] = 0.0
                     for column in T.serial(VALUE_TILE):
-                        pre_update_state = state[dim, column] - key_value * residual[column]
-                        key_part[0] = key_part[0] + state_grad[dim, column] * residual[column]
-                        key_part[0] = key_part[0] + pre_update_state * prediction_grad[column]
-                        state_grad[dim, column] = state_grad[dim, column] + key_value * prediction_grad[column]
-                        gate_part[0] = gate_part[0] + state_grad[dim, column] * pre_update_state
-                        state_grad[dim, column] = state_grad[dim, column] * decay
-                    key_grad_parts[
-                        batch_index, value_head, token, dim, tile
-                    ] = key_part[0]
-                gate_grad_parts[batch_index, value_head, token, tile] = gate_part[0]
+                        beta_part[0] = beta_part[0] + residual_grad[column] * (
+                            T.cast(
+                                value[
+                                    batch_index,
+                                    value_head,
+                                    token,
+                                    tile * VALUE_TILE + column,
+                                ],
+                                "float32",
+                            )
+                            - prediction[column]
+                        )
+                        value_grad[
+                            batch_index,
+                            value_head,
+                            token,
+                            tile * VALUE_TILE + column,
+                        ] = residual_grad[column] * beta[batch_index, value_head, token]
+                        prediction_grad[column] = -residual_grad[column] * beta[
+                            batch_index, value_head, token
+                        ]
+                    beta_grad_parts[batch_index, value_head, token, tile] = beta_part[0]
+
+                    gate_part = T.alloc_fragment((1,), "float32")
+                    gate_part[0] = 0.0
+                    for dim in T.serial(HEAD_DIM):
+                        key_part = T.alloc_fragment((1,), "float32")
+                        key_part[0] = 0.0
+                        key_value = T.cast(
+                            key[batch_index, query_head, token, dim], "float32"
+                        )
+                        for column in T.serial(VALUE_TILE):
+                            pre_update_state = state[dim, column] - key_value * residual[column]
+                            key_part[0] = (
+                                key_part[0] + state_grad[dim, column] * residual[column]
+                            )
+                            key_part[0] = (
+                                key_part[0] + pre_update_state * prediction_grad[column]
+                            )
+                            state_grad[dim, column] = (
+                                state_grad[dim, column] + key_value * prediction_grad[column]
+                            )
+                            gate_part[0] = (
+                                gate_part[0] + state_grad[dim, column] * pre_update_state
+                            )
+                            state_grad[dim, column] = state_grad[dim, column] * decay
+                        key_grad_parts[
+                            batch_index, value_head, token, dim, tile
+                        ] = key_part[0]
+                    gate_grad_parts[
+                        batch_index, value_head, token, tile
+                    ] = gate_part[0]
 
             for dim, column in T.Parallel(HEAD_DIM, VALUE_TILE):
                 initial_state_grad[
@@ -544,7 +639,7 @@ class _GatedDeltaRule(torch.autograd.Function):
         )
         output, final_state = _compile_state_output(
             batch, query_heads, value_heads, length, scale, output_final_state
-        )(query, key, value, gate, beta, initial_state)
+        )(query, key, cumulative_gate, corrected_key, corrected_value, initial_state)
         ctx.save_for_backward(
             query, key, value, gate, beta, cumulative_gate,
             key_inverse, value_inverse, initial_state,
@@ -557,34 +652,57 @@ class _GatedDeltaRule(torch.autograd.Function):
     @staticmethod
     def backward(ctx, output_grad, final_state_grad):
         query, key, value, gate, beta, _, _, _, initial_state = ctx.saved_tensors
-        with torch.enable_grad():
-            gradient_inputs = tuple(
-                tensor.detach().requires_grad_()
-                for tensor in (query, key, value, gate, beta, initial_state)
-            )
-            from .gdn_reference import gated_delta_rule_reference
+        batch, query_heads, length, _ = query.shape
+        value_heads = value.shape[1]
+        if output_grad is None:
+            output_grad = torch.zeros_like(value)
+        if not ctx.output_final_state or final_state_grad is None:
+            final_state_grad = torch.zeros_like(initial_state)
 
-            reference_output, reference_state = gated_delta_rule_reference(
-                *gradient_inputs[:5],
-                scale=ctx.scale,
-                initial_state=gradient_inputs[5],
-                output_final_state=ctx.output_final_state,
-            )
-            outputs = [reference_output]
-            grad_outputs = [output_grad]
-            if ctx.output_final_state:
-                outputs.append(reference_state)
-                grad_outputs.append(final_state_grad)
-            gradients = torch.autograd.grad(
-                outputs,
-                gradient_inputs,
-                grad_outputs=grad_outputs,
-                allow_unused=False,
-            )
-        initial_state_grad = gradients[5] if ctx.has_initial_state else None
+        chunk_states = _compile_chunk_states(
+            batch, query_heads, value_heads, length
+        )(key, value, gate, beta, initial_state)
+        (
+            query_grad_parts,
+            key_grad_parts,
+            value_grad_float,
+            gate_grad_parts,
+            beta_grad_parts,
+            initial_state_grad,
+        ) = _compile_backward(
+            batch, query_heads, value_heads, length, ctx.scale
+        )(
+            query,
+            key,
+            value,
+            gate,
+            beta,
+            initial_state,
+            chunk_states,
+            output_grad.contiguous(),
+            final_state_grad.contiguous(),
+        )
+        query_grad, key_grad, value_grad, gate_grad, beta_grad = _compile_reduce_gradients(
+            batch, query_heads, value_heads, length
+        )(
+            query_grad_parts,
+            key_grad_parts,
+            value_grad_float,
+            gate_grad_parts,
+            beta_grad_parts,
+        )
+        if not ctx.has_initial_state:
+            initial_state_grad = None
         return (
-            gradients[0], gradients[1], gradients[2], gradients[3], gradients[4],
-            None, initial_state_grad, None, None,
+            query_grad,
+            key_grad,
+            value_grad,
+            gate_grad,
+            beta_grad,
+            None,
+            initial_state_grad,
+            None,
+            None,
         )
 
 

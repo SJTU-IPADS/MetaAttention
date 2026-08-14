@@ -63,6 +63,30 @@ def test_input_contract_rejects_invalid_tensors(mutate, message):
         validate_gdn_inputs(*inputs, check_device=False)
 
 
+@pytest.mark.parametrize(
+    ("mutate", "message"),
+    [
+        (lambda xs: xs.__setitem__(1, torch.randn(2, 1, 64, 128, dtype=torch.bfloat16)), "batch dimensions must match"),
+        (lambda xs: xs.__setitem__(3, torch.zeros(1, 1, 63, dtype=torch.float32)), "gate must have shape"),
+        (lambda xs: xs.__setitem__(4, torch.zeros(1, 2, 64, dtype=torch.float32)), "beta must have shape"),
+        (lambda xs: xs.__setitem__(2, xs[2].transpose(-1, -2)), "value must be contiguous"),
+    ],
+)
+def test_input_contract_rejects_mismatched_shapes_and_strides(mutate, message):
+    inputs = list(_inputs())
+    mutate(inputs)
+    with pytest.raises(ValueError, match=message):
+        validate_gdn_inputs(*inputs, check_device=False)
+
+
+def test_input_contract_rejects_bad_state_dtype():
+    inputs = _inputs()
+    state = torch.empty(1, 1, 128, 128, dtype=torch.bfloat16)
+    with pytest.raises(ValueError, match="initial_state must have dtype"):
+        validate_gdn_inputs(*inputs, initial_state=state, check_device=False)
+
+
+
 @pytest.mark.parametrize("length", [0, 63, 65])
 def test_input_contract_rejects_unaligned_lengths(length):
     inputs = _inputs(length=length)

@@ -11,7 +11,8 @@ pytestmark = [pytest.mark.functional, pytest.mark.gpu, pytest.mark.h20]
 
 
 def _relative_l2(actual: torch.Tensor, expected: torch.Tensor) -> float:
-    return ((actual.float() - expected.float()).norm() / expected.float().norm().clamp_min(1e-12)).item()
+    difference = (actual.float() - expected.float()).norm()
+    return (difference / expected.float().norm().clamp_min(1e-12)).item()
 
 
 def _inputs(device, *, hq=1, hv=1, length=64, initial=False, requires_grad=False):
@@ -81,6 +82,28 @@ def test_h20_all_gradients(require_h20, loss_path, hq, hv, length, initial):
     expected = torch.autograd.grad(expected_loss, reference_inputs)
     for actual_gradient, expected_gradient in zip(actual, expected):
         assert _relative_l2(actual_gradient, expected_gradient) <= 0.02
+
+
+@pytest.mark.parametrize(
+    ("gate_value", "beta_value"),
+    [(-1e-4, 1e-4), (-1e-4, 1.0 - 1e-4), (-1.0, 0.5)],
+)
+def test_h20_gate_and_beta_regimes(require_h20, gate_value, beta_value):
+    q, k, v, g, beta, _ = _inputs(require_h20, length=64)
+    g.fill_(gate_value)
+    beta.fill_(beta_value)
+    actual = GDNEngine(require_h20)(q, k, v, g, beta)
+    expected, _ = gated_delta_rule_reference(q, k, v, g, beta)
+    assert _relative_l2(actual, expected) <= 0.02
+
+
+def test_h20_output_only_loss_with_requested_final_state(require_h20):
+    q, k, v, g, beta, _ = _inputs(require_h20, requires_grad=True)
+    output, final_state = GDNEngine(require_h20)(
+        q, k, v, g, beta, output_final_state=True
+    )
+    assert final_state is not None
+    torch.autograd.grad(output.float().square().mean(), (q, k, v, g, beta))
 
 
 def test_h20_output_only_does_not_return_state(require_h20):
