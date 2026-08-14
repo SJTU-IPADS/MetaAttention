@@ -15,6 +15,10 @@ To run generated kernels, you still need a supported GPU runtime:
 - 1x NVIDIA Hopper GPU, or
 - 1x AMD MI200 Series GPU
 
+The dedicated Gated Delta Rule engine additionally supports NVIDIA H20. Its
+first-release contract is fixed-length, head-first BF16 training with FP32
+gate/beta/state, 128-dimensional key/value heads, and 64-token chunk alignment.
+
 ## Local Quickstart with `uv`
 
 Use this path if you already have a working Python environment and a PyTorch build that matches your target runtime (CUDA, ROCm, or CPU) on the host machine.
@@ -57,6 +61,15 @@ Run the GPU correctness suite explicitly:
 uv run --extra test pytest -q --run-gpu -m 'functional and gpu' tests/functional
 ```
 This executes the legacy 10-case parity matrix plus direct-engine and official v2 factory coverage. Forward results, backward gradients where supported, reference implementations, dtypes, and operator-specific tolerances are checked. Without `--run-gpu`, GPU tests are collected but skipped with an explicit reason; without a CUDA/HIP-visible device, the hardware fixture skips them.
+
+Run the H20 GDN functional suite on an otherwise idle H20:
+```bash
+CUDA_VISIBLE_DEVICES=0 uv run --extra test pytest -q --run-gpu \
+  -m 'functional and h20' tests/functional/test_gdn_h20.py
+```
+This executes the generated TileLang kernel for single- and multi-chunk GVA,
+initial/final state, custom scale, and all supported gradients. See
+`examples/gated_delta_rule.py` and `docs/API.md` for the public interface.
 
 **Expected output**: all unit tests pass. On a supported GPU, all functional tests run without unconditional skips. Optional baseline warnings do not replace MetaAttention correctness checks.
 

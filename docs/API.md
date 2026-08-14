@@ -108,6 +108,42 @@ output.backward(do)
 
 
 
+## Gated Delta Rule API
+
+`GDNEngine` is the dedicated H20 training API for Gated Delta Rule. It is not
+an algorithm mode of `LinearAttentionEngine`.
+
+```py
+from attn_engine import GDNEngine
+
+engine = GDNEngine("cuda")
+output, final_state = engine(
+    query,               # [B, Hk, T, 128], bfloat16
+    key,                 # [B, Hk, T, 128], bfloat16
+    value,               # [B, Hv, T, 128], bfloat16
+    gate,                # [B, Hv, T], float32, log-space decay
+    beta,                # [B, Hv, T], float32
+    scale=0.125,         # optional Python float; default 128**-0.5
+    initial_state=state, # optional [B, Hv, 128, 128], float32
+    output_final_state=True,
+)
+```
+
+`Hv` must be a positive multiple of `Hk`; each query/key head serves
+`Hv/Hk` value and state heads. `T` must be positive and divisible by the fixed
+chunk size 64. Inputs are contiguous and head-first. Output is BF16; requested
+final state and a provided initial-state gradient are FP32. Losses may consume
+output, final state, or both, and backward covers query, key, value, gate,
+beta, and a provided initial state through the differentiable GDN reference
+path while preserving the same public H20 contract.
+
+The first release supports only NVIDIA H20, fixed key/value dimensions 128,
+BF16 query/key/value, and FP32 gate/beta/state. It rejects other devices,
+dtypes, layouts, dimensions, and unaligned lengths before kernel execution.
+Q/K normalization, variable lengths, padding, and decode caches are outside
+this API.
+
+
 # Upcoming Features 
 
 ## Attention Library Level API

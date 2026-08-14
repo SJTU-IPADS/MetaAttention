@@ -95,6 +95,7 @@ markers = [
   "benchmark: long-running benchmark runner",
   "slow: long-running test",
   "h100: requires an H100-compatible CUDA runner",
+  "h20: requires an NVIDIA H20 CUDA runner",
   "mi250: requires an MI250-compatible HIP runner",
   "plot: PDF plotting contract tests",
   "io: CSV and artifact I/O contract tests",

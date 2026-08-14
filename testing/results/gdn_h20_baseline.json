@@ -1,0 +1,27 @@
+{
+  "shape": {
+    "batch": 1,
+    "query_heads": 4,
+    "value_heads": 8,
+    "length": 1024,
+    "dim": 128
+  },
+  "dtype": {
+    "query_key_value_output": "bfloat16",
+    "gate_beta_state": "float32"
+  },
+  "warmup": 25,
+  "repetitions": 100,
+  "first_compile_ms": 94.43695202935487,
+  "kernel_ms": 3.1579251289367676,
+  "end_to_end_ms": 39.595375061035156,
+  "peak_allocated_bytes": 288457216,
+  "hardware": "NVIDIA H20",
+  "compute_capability": [
+    9,
+    0
+  ],
+  "torch": "2.11.0+cu128",
+  "cuda": "12.8",
+  "python": "3.12.13"
+}

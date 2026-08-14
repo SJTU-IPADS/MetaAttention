@@ -10,6 +10,7 @@ pytestmark = [pytest.mark.unit, pytest.mark.examples]
 
 EXAMPLE_FACTORIES = (
     ("examples.gated_retention", "gated_retention"),
+    ("examples.gated_delta_rule", "gated_delta_rule"),
     ("examples.mamba2", "mamba2"),
     ("examples.mha", "causal_softmax_attention"),
     ("examples.mha_decode", "softmax_attention_decode"),
