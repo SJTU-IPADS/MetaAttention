@@ -29,7 +29,10 @@ The first-release head mapping where `Hv % Hk == 0`. Each query/key head serves 
 The first release requires `T % 64 == 0`. Unaligned input is rejected explicitly; the engine never truncates or pads sequences implicitly.
 
 **H20 GDN Adapter**:
-The sm89 TileLang implementation of GDN. It follows FlashQLA's mathematical reference and test behavior but does not reuse Hopper-only warp-specialized kernels.
+The current correctness-first GDN implementation for the repository's H20 target. Its existing staged TileLang path is the baseline; a FlashQLA-derived fused schedule may replace it only after the same public contract, numerical, memory, and exclusive-GPU gates pass.
 
+**Hopper Reference Schedule**:
+The single-card fused GDN execution strategy in Qwen FlashQLA used as the source for the candidate fused schedule. The repository adapts its data flow and TileLang scheduling to the target device rather than assuming every upstream primitive is portable.
+_Avoid_: direct kernel port, unverified Hopper migration
 **GDN Precision Contract**:
 Query, key, value, and output use bfloat16. Log-space gate, beta, initial state, final state, and state accumulation use float32.

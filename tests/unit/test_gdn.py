@@ -100,3 +100,33 @@ def test_input_contract_rejects_bad_state_and_scale():
         validate_gdn_inputs(*inputs, initial_state=torch.empty(1, 1, 64, 128), check_device=False)
     with pytest.raises(TypeError, match="scale must be a Python float"):
         validate_gdn_inputs(*inputs, scale=torch.tensor(DEFAULT_SCALE), check_device=False)
+
+
+def test_flash_qla_layout_adapter_round_trips_head_first_tensors():
+    from attn_engine.gdn_flash_qla import _head_first, _token_first
+
+    tensor = torch.arange(2 * 3 * 5 * 7).reshape(2, 3, 5, 7)
+    token_first = _token_first(tensor)
+
+    assert token_first.shape == (2, 5, 3, 7)
+    assert token_first.is_contiguous()
+    torch.testing.assert_close(_head_first(token_first), tensor)
+
+
+
+
+def test_flash_qla_layout_adapter_keeps_single_head_last_stride_contiguous():
+    from attn_engine.gdn_flash_qla import _token_first
+
+    tensor = torch.arange(64).reshape(1, 1, 64)
+
+    assert _token_first(tensor).stride(-1) == 1
+def test_flash_qla_layout_adapter_round_trips_gate_tensors():
+    from attn_engine.gdn_flash_qla import _head_first, _token_first
+
+    tensor = torch.arange(2 * 3 * 5).reshape(2, 3, 5)
+    token_first = _token_first(tensor)
+
+    assert token_first.shape == (2, 5, 3)
+    assert token_first.is_contiguous()
+    torch.testing.assert_close(_head_first(token_first), tensor)

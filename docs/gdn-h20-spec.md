@@ -1,16 +1,8 @@
 # H20 Gated Delta Rule Adaptation
 
-## Problem Statement
+MetaAttention supports scalar-decay recurrent linear attention, but QLA's Gated Delta Rule requires a separate state transition with beta-weighted delta correction, a causal KKT solve, and explicit initial/final state. The existing H20 path is a correctness-first staged TileLang adapter. Its measured baseline for `[B=1,Hk=4,Hv=8,T=1024,D=128]` is 673.6 ms end-to-end, 301,072,896 peak allocated bytes, and 743.8 ms first compilation on the recorded environment.
 
-MetaAttention currently supports scalar-decay recurrent linear attention through a shared LinearAttentionEngine, but it cannot express QLA's Gated Delta Rule. GDN changes the recurrent state transition by adding beta-weighted delta correction, a causal KKT solve, and explicit initial and final state. Users targeting H20 therefore cannot define, lower, train, or benchmark QLA-compatible GDN through MetaAttention without introducing a dedicated path.
-
-The upstream FlashQLA kernels do not solve this directly: their optimized implementations target SM90 and newer architectures, while H20 is SM89. Reusing the Hopper warp-specialized kernels would rely on unavailable TMA and warpgroup behavior. MetaAttention needs an H20 GDN Adapter that preserves FlashQLA's mathematical and training behavior without pretending that the Hopper schedule is portable.
-
-## Solution
-
-Add a dedicated GDN Engine for H20/sm89. The module will expose one high-level training interface, lower fixed-length head-first GDN inputs into staged TileLang kernels, and return the GDN output plus an optional final state. It will remain separate from LinearAttentionEngine because GDN has a different state recurrence rather than a different elementwise modifier configuration.
-
-The first release will implement gate cumsum, causal KKT solve, state/output evaluation, and backward as separate H20-compatible kernels. It will use FlashQLA's MIT-licensed mathematical reference and observable test behavior as the compatibility definition, with attribution, but will not reuse Hopper-only warp-specialized implementation details.
+The next implementation candidate is a FlashQLA-derived single-card fused schedule adapted behind the unchanged head-first API. The upstream implementation uses token-first tensors and Hopper-oriented TileLang scheduling. A zero-copy token-first view was tested but rejected: upstream gate processing requires a unit last-dimension stride, which a head-first view cannot guarantee for `Hv=1`; the adapter therefore performs explicit contiguous layout conversion. Context parallelism, variable-length inputs, and implicit tail handling remain out of scope.
 
 ## User Stories
 

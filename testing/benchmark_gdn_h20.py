@@ -9,7 +9,7 @@ import torch
 from tilelang.profiler import do_bench
 
 from attn_engine import GDNEngine
-from attn_engine.gdn_tilelang import _compile_gate_cumsum, _compile_kkt, _compile_state_output, _compile_wy
+from attn_engine.gdn_flash_qla import _backend, _token_first
 
 
 SHAPE = {"batch": 1, "query_heads": 4, "value_heads": 8, "length": 1024, "dim": 128}
@@ -31,53 +31,52 @@ def benchmark(device: torch.device) -> dict[str, object]:
     beta = torch.rand(batch, hv, length, device=device, dtype=torch.float32)
     engine = GDNEngine(device)
 
-    _compile_gate_cumsum.cache_clear()
-    _compile_kkt.cache_clear()
-    _compile_state_output.cache_clear()
-    _compile_wy.cache_clear()
     started = time.perf_counter()
     engine(query, key, value, gate, beta)
     torch.cuda.synchronize(device_index)
     compile_ms = (time.perf_counter() - started) * 1e3
-    gate_cumsum_kernel = _compile_gate_cumsum(batch, hv, length)
-    kkt_kernel = _compile_kkt(batch, hq, hv, length)
-    wy_kernel = _compile_wy(batch, hq, hv, length)
-    state_kernel = _compile_state_output(batch, hq, hv, length, 128**-0.5, False)
-    zero_state = torch.zeros(batch, hv, dim, dim, device=device, dtype=torch.float32)
-    cumulative_gate = gate_cumsum_kernel(gate)
-    key_inverse, value_inverse = kkt_kernel(key, beta, cumulative_gate)
-    corrected_key, corrected_value = wy_kernel(
-        key, value, beta, cumulative_gate, key_inverse, value_inverse
-    )
-    forward_stage_ms = {
+    backend = _backend()
+    query_tf = _token_first(query)
+    key_tf = _token_first(key)
+    value_tf = _token_first(value)
+    gate_tf = _token_first(gate)
+    beta_tf = _token_first(beta)
+    cumulative_gate = backend.chunk_local_cumsum(gate_tf)
+    kkt = backend.kkt_solve(key_tf, beta_tf)
+    kernel_ms = {
         "gate_cumsum": do_bench(
-            lambda: gate_cumsum_kernel(gate), warmup=WARMUP, rep=REPETITIONS
+            lambda: backend.chunk_local_cumsum(gate_tf),
+            warmup=WARMUP,
+            rep=REPETITIONS,
         ),
         "kkt": do_bench(
-            lambda: kkt_kernel(key, beta, cumulative_gate),
-            warmup=WARMUP,
-            rep=REPETITIONS,
-        ),
-        "wy": do_bench(
-            lambda: wy_kernel(
-                key, value, beta, cumulative_gate, key_inverse, value_inverse
-            ),
-            warmup=WARMUP,
-            rep=REPETITIONS,
-        ),
-        "state_output": do_bench(
-            lambda: state_kernel(
-                query,
-                key,
-                cumulative_gate,
-                corrected_key,
-                corrected_value,
-                zero_state,
-            ),
+            lambda: backend.kkt_solve(key_tf, beta_tf),
             warmup=WARMUP,
             rep=REPETITIONS,
         ),
     }
+    fused_kernel_ms = do_bench(
+        lambda: backend.fused_gdr_fwd(
+            q=query_tf,
+            k=key_tf,
+            v=value_tf,
+            a=kkt,
+            g=cumulative_gate,
+            b=beta_tf,
+            scale=128**-0.5,
+            initial_state=None,
+            output_final_state=False,
+            output_h=False,
+            output_o=True,
+            cu_seqlens=None,
+            cp_seq_map=None,
+            raw_cu_seqlens=None,
+            state_v_first=False,
+        ),
+        warmup=WARMUP,
+        rep=REPETITIONS,
+    )
+    kernel_ms["fused_state_output"] = fused_kernel_ms
     end_to_end_ms = do_bench(
         lambda: engine(query, key, value, gate, beta),
         warmup=WARMUP,
@@ -89,8 +88,7 @@ def benchmark(device: torch.device) -> dict[str, object]:
         "warmup": WARMUP,
         "repetitions": REPETITIONS,
         "first_compile_ms": compile_ms,
-        "forward_stage_ms": forward_stage_ms,
-        "staged_forward_ms": sum(forward_stage_ms.values()),
+        "forward_kernel_ms": kernel_ms,
         "end_to_end_ms": end_to_end_ms,
         "peak_allocated_bytes": torch.cuda.max_memory_allocated(device_index),
         "hardware": torch.cuda.get_device_name(device_index),

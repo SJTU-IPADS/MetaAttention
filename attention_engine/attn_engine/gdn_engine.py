@@ -128,7 +128,7 @@ class GDNEngine:
         initial_state: torch.Tensor | None = None,
         output_final_state: bool = False,
     ) -> torch.Tensor | tuple[torch.Tensor, torch.Tensor]:
-        from .gdn_tilelang import gated_delta_rule
+        from .gdn_flash_qla import gated_delta_rule
 
         validate_gdn_inputs(
             query,
