@@ -1,3 +1,0 @@
-# Dedicated GDN Engine
-
-QLA adaptation uses a dedicated GDN Engine rather than extending LinearAttentionEngine because Gated Delta Rule changes the recurrent state transition with beta, KKT solve, and explicit state. The first release targets H20/sm89 BF16 with K=V=128 and aligned fixed-length sequences. It implements a staged Ada-compatible TileLang adapter from FlashQLA's MIT-licensed mathematical reference and test behavior: gate cumsum, KKT solve, state/output, and backward are separate kernels. Hopper-only warp-specialized kernels are not portable to sm89. Variable-length inputs, automatic intra-card context parallelism, non-H20 backends, and FP16 are intentionally outside this release.

@@ -134,16 +134,16 @@ output, final_state = engine(
 chunk size 64. Inputs are contiguous and head-first. Output is BF16; requested
 final state and a provided initial-state gradient are FP32. Losses may consume
 output, final state, or both, and backward covers query, key, value, gate,
-beta, and a provided initial state through the differentiable GDN reference
-path while preserving the same public H20 contract.
+beta, and a provided initial state through the fused GDN backend while
+preserving the same public H20 contract.
 
 The first release supports only the repository's validated NVIDIA H20 target, fixed key/value dimensions 128, BF16 query/key/value, and FP32 gate/beta/state. It rejects other devices, dtypes, layouts, dimensions, and unaligned lengths before kernel execution.
-Q/K normalization, variable lengths, padding, and decode caches are outside this API. A candidate FlashQLA-derived fused schedule is an internal implementation choice; it does not change this public contract.
+Q/K normalization, variable lengths, padding, and decode caches are outside this API.
 
-# Upcoming Features 
+# Upcoming Features
 
 ## Attention Library Level API
-This level API is designed for users to use the existing attention mechanism in the library. 
+This level API is designed for users to use the existing attention mechanism in the library.
 ```py
 mod = AttentionLibrary(
     attn_type: str="SoftmaxAttention",
@@ -185,5 +185,3 @@ def mask_mod(b, h, q_idx, kv_idx, custom_fwd_inputs) -> Bool:
     """The offset of q need to be passed by custom_fwd_inputs"""
     return True
 ```
-
-

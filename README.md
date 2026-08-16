@@ -67,7 +67,7 @@ Run the H20 GDN functional suite on an otherwise idle H20:
 CUDA_VISIBLE_DEVICES=0 uv run --extra test pytest -q --run-gpu \
   -m 'functional and h20' tests/functional/test_gdn_h20.py
 ```
-This executes the generated TileLang kernel for single- and multi-chunk GVA,
+This executes the FlashQLA-derived fused kernel for single- and multi-chunk GVA,
 initial/final state, custom scale, and all supported gradients. See
 `examples/gated_delta_rule.py` and `docs/API.md` for the public interface.
 

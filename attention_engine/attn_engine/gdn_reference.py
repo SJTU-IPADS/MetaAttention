@@ -25,8 +25,8 @@ def gated_delta_rule_reference(
     """Evaluate head-first Gated Delta Rule using an FP64 recurrent oracle.
 
     This deliberately simple implementation is CPU-safe and differentiable. It
-    defines the public operator semantics; production H20 calls use generated
-    TileLang kernels instead.
+    defines the public operator semantics; production H20 calls use the
+    FlashQLA-derived fused backend instead.
     """
     if scale is None:
         scale = DEFAULT_SCALE
@@ -61,9 +61,7 @@ def gated_delta_rule_reference(
         prediction = torch.einsum("bhk,bhkv->bhv", k[:, :, index], state)
         residual = (v[:, :, index] - prediction) * b[:, :, index, None]
         state = state + torch.einsum("bhk,bhv->bhkv", k[:, :, index], residual)
-        outputs.append(
-            torch.einsum("bhk,bhkv->bhv", q[:, :, index] * scale, state)
-        )
+        outputs.append(torch.einsum("bhk,bhkv->bhv", q[:, :, index] * scale, state))
 
     output = torch.stack(outputs, dim=2).to(query.dtype)
     final_state = state.to(torch.float32) if output_final_state else None
