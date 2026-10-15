@@ -143,6 +143,12 @@ execution paths, public-call and CUDA Graph latency, memory use and raw records.
 
 ## Performance tests
 
+For performance on previously unseen Stateful Operator compositions, see the
+[expression generalization suite](docs/stateful-generalization-tests.md). It
+scans seeded input expressions, feature gates, ordered rank-one propagations,
+multiple writes/readouts and their combinations, verifies outputs and final
+State, and reports latency, memory and the stable complexity envelope.
+
 We consider Figure 11 and Figure 14 to be the key results of our paper, demonstrating the performance of MetaAttention-generated operators on hardware.
 The following are the steps to replicate these experiments.
 
