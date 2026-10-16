@@ -227,9 +227,22 @@ def benchmark(mutation, args, length):
         record["stable"] = assessments[args.metric]["stable"]
         record["status"] = "OK"
     except (StatefulCompilationError, RuntimeError, AssertionError) as error:
+        resource_limited = (
+            isinstance(error, RuntimeError)
+            and str(error) == "runtime workload exceeds compiled resource envelope"
+        )
+        rejection = (
+            StatefulCompilationError(
+                "RUNTIME_RESOURCE", "workspace", {"reason": str(error)}
+            )
+            if resource_limited
+            else error
+            if isinstance(error, StatefulCompilationError)
+            else None
+        )
         record.update(
             status="REJECTED"
-            if isinstance(error, StatefulCompilationError)
+            if rejection is not None
             else "INCORRECT"
             if isinstance(error, AssertionError)
             else "ERROR",
@@ -237,17 +250,19 @@ def benchmark(mutation, args, length):
             phase=phase,
             error=str(error),
         )
-        if isinstance(error, StatefulCompilationError):
-            record["rejection"] = error.as_dict()
+        if rejection is not None:
+            record["rejection"] = rejection.as_dict()
     return record
 
 
-def summarize(records):
-    """Conservative contiguous envelope: all seeds must pass at each level.
+def summarize(records, seeds):
+    """Conservative contiguous envelope: every requested seed must pass.
 
-    A later recovery does not erase an earlier cliff. Failed/missing seed points
-    cannot count as stable. Each group is one family and one workload shape.
+    A seed that was requested but not yet collected cannot count as stable.
+    A later recovery does not erase an earlier cliff. Each group is one family
+    and one workload shape.
     """
+    requested = set(seeds)
     groups = {}
     for record in records:
         key = tuple(
@@ -256,7 +271,6 @@ def summarize(records):
         groups.setdefault(key, []).append(record)
     summaries = []
     for key, points in groups.items():
-        seeds = {point["seed"] for point in points}
         levels = sorted({point["level"] for point in points})
         stable_levels, boundary = [], None
         for level in levels:
@@ -264,7 +278,7 @@ def summarize(records):
             passed = {
                 p["seed"] for p in at_level if p["status"] == "OK" and p["stable"]
             }
-            if passed != seeds:
+            if not requested.issubset(passed):
                 boundary = level
                 break
             stable_levels.append(level)
@@ -273,7 +287,7 @@ def summarize(records):
                 **dict(
                     zip(("family", "batch", "heads", "rows", "columns", "length"), key)
                 ),
-                "seeds": sorted(seeds),
+                "seeds": sorted(requested),
                 "tested_levels": levels,
                 "stable_prefix_levels": stable_levels,
                 "largest_stable_tested_level": stable_levels[-1]
@@ -340,7 +354,8 @@ def _write(payload, directory):
         "",
         f"Metric: `{payload['metric']}`. Stable requires variant/control <= "
         f"{payload['max_slowdown']} and paired ratio IQR/median <= {payload['max_jitter']}.",
-        "All seeds must pass. A failure closes the contiguous tested envelope.",
+        "Every requested seed must pass, including seeds not yet collected. "
+        "A failure closes the contiguous tested envelope.",
         "A missing boundary only means the largest tested level passed.",
         "",
         "| Family | B/H/K/V/T | Stable tested levels | First unstable/failed |",
@@ -477,7 +492,7 @@ def main():
         with torch.no_grad():
             record = benchmark(mutation, args, length)
         payload["records"].append(record)
-        payload["envelopes"] = summarize(payload["records"])
+        payload["envelopes"] = summarize(payload["records"], args.seeds)
         _write(payload, args.output_dir)
         print(
             json.dumps(

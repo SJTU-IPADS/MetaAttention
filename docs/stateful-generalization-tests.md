@@ -68,12 +68,13 @@ Default stability requires both:
 - Paired ratio interquartile range divided by its median at most **0.10**.
 
 Use `--max-slowdown`, `--max-jitter` and `--metric cuda_ms|wall_ms` to change the
-criterion. JSON distinguishes the latency budget from repeatability. Both seeds
-must pass at each level for the reported envelope to advance. An incorrect,
-rejected, noisy or slow point closes the contiguous sequence of tested levels;
-a later recovery does not erase an earlier failure. A passing largest level is
-only a lower bound on the stable range. Untested intermediate levels are not
-inferred to pass.
+criterion. JSON distinguishes the latency budget from repeatability. Every seed
+requested for the run must pass at each level for the reported envelope to
+advance. A seed not yet collected, including one omitted by an interrupted scan,
+does not count as passing. An incorrect, rejected, noisy or slow point likewise
+closes the contiguous sequence of tested levels; a later recovery does not erase
+an earlier failure. A passing largest level is only a lower bound on the stable
+range. Untested intermediate levels are not inferred to pass.
 
 Increasing rank, write count or output count adds real work. Ratios therefore
 measure preservation of end-to-end latency, not equal-FLOP compiler efficiency.

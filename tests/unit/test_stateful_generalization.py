@@ -2,11 +2,14 @@
 
 from __future__ import annotations
 
+from types import SimpleNamespace
+
 import pytest
 import torch
 
 from attn_engine import StateTuple, Target
-from testing.benchmark_stateful_generalization import assess, summarize
+from attn_engine.stateful.compile.plan import WorkspacePolicy
+from testing.benchmark_stateful_generalization import assess, benchmark, summarize
 from testing.stateful_generalization_profiles import (
     FAMILIES,
     Mutation,
@@ -121,12 +124,66 @@ def test_envelope_requires_all_seeds_and_stops_at_first_cliff():
                     stable=not (level == 2 and seed == 19),
                 )
             )
-    (summary,) = summarize(records)
+    (summary,) = summarize(records, seeds=(17, 19))
     assert summary["stable_prefix_levels"] == [0, 1]
     assert summary["largest_stable_tested_level"] == 1
     assert summary["first_unstable_or_failed_level"] == 2
     records[5].update(status="REJECTED", stable=False)
-    assert summarize(records)[0]["first_unstable_or_failed_level"] == 2
+    assert summarize(records, seeds=(17, 19))[0]["first_unstable_or_failed_level"] == 2
     # An omitted seed also closes the envelope.
     del records[5]
-    assert summarize(records)[0]["first_unstable_or_failed_level"] == 2
+    assert summarize(records, seeds=(17, 19))[0]["first_unstable_or_failed_level"] == 2
+
+
+def test_uncollected_requested_seed_does_not_advance_the_envelope():
+    collected = dict(
+        family="expression",
+        batch=1,
+        heads=4,
+        rows=64,
+        columns=64,
+        length=512,
+        seed=1701,
+        level=0,
+        status="OK",
+        stable=True,
+    )
+    (summary,) = summarize([collected], seeds=(1701, 2028))
+    assert summary["seeds"] == [1701, 2028]
+    assert summary["stable_prefix_levels"] == []
+    assert summary["largest_stable_tested_level"] is None
+    assert summary["first_unstable_or_failed_level"] == 0
+    assert summary["boundary_observed"] is True
+
+
+def _benchmark_failure(monkeypatch, error):
+    def fail(*_args, **_kwargs):
+        raise error
+
+    monkeypatch.setattr("testing.benchmark_stateful_generalization._prepare", fail)
+    return benchmark(
+        Mutation("expression", 0, 1701),
+        SimpleNamespace(batch=1, heads=4, rows=64, columns=64),
+        512,
+    )
+
+
+def test_workspace_limit_is_rejected_before_timing(monkeypatch):
+    policy = WorkspacePolicy(bytes_per_token=8, maximum_bytes=1)
+    with pytest.raises(RuntimeError, match="resource envelope") as caught:
+        policy.required_bytes(2)
+    record = _benchmark_failure(monkeypatch, caught.value)
+    assert record["status"] == "REJECTED"
+    assert record["stable"] is False
+    assert record["rejection"] == {
+        "category": "RUNTIME_RESOURCE",
+        "path": "workspace",
+        "details": {"reason": str(caught.value)},
+    }
+
+
+def test_unrelated_runtime_failure_stays_an_error(monkeypatch):
+    record = _benchmark_failure(monkeypatch, RuntimeError("CUDA driver lost"))
+    assert record["status"] == "ERROR"
+    assert record["stable"] is False
+    assert "rejection" not in record
