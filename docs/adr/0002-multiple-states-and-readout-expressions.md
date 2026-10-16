@@ -46,8 +46,7 @@ proof that every State reference destroys an affine summary: a linear action on
 Prior State, including cross-State coupling, can remain jointly affine. The
 TTT and Titans references use nonlinear State-derived normalization in their
 updates and need a separate execution decision. A nonlinear transformation
-between an auxiliary scan and a downstream scan is another distinct case; see
-[the coverage assessment](../fla-ir-coverage-assessment.md).
+between an auxiliary scan and a downstream scan is another distinct case.
 
 Product Features (Based, Rebased: a `[K*K, V]` numerator) were deferred in this
 schema because it lacked a typed product Feature expression. ADR 0003 adds

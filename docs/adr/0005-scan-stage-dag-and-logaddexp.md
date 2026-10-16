@@ -12,4 +12,4 @@ Schema v5 增加显式 `ScanStageIR`：每个 `ScanStage` 使用独立验证的 
 
 `Abs` 与显式 `Cast` 支持 FP32/BF16 转换。Cast 的位置属于数学精度合同，不能仅靠修改 leaf dtype 或隐式标量 promotion 替代。Preconditioned examples 先 Cast q/k/v 为 FP32 再运算；Abs 零点采用零 subgradient。
 
-这是阶段组合、缓存和梯度的能力交付。Preconditioned matrix stages 仍可使用 reference affine scan，长序列内存与延迟需单独优化；稳定 log scan 也使用 PyTorch segmented parallel prefix。首版不保证 FLA 性能相当。执行与测量限制见 [实施计划](../stateful-capability-roadmap.md) 和 [阶段基准](../stateful-stage-benchmarks.md)。
+这是阶段组合、缓存和梯度的能力交付。Preconditioned matrix stages 仍可使用 reference affine scan，长序列内存与延迟需单独优化；稳定 log scan 也使用 PyTorch segmented parallel prefix。首版不保证 FLA 性能相当。测量合同见 [阶段基准](../stateful-stage-benchmarks.md)。

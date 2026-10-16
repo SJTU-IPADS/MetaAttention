@@ -10,9 +10,7 @@ The [Stateful example guide](examples/README.md) documents Delta Rule, KDA,
 GDN2, ComBa, IPLR/DPLR, Gated Oja, fixed-step Delta Product, and ABC, including
 input conventions, state continuation, numerical limits, and validation.
 The [domain glossary](GLOSSARY.md) defines State, Transition, Readout and coverage
-terms. The [FLA coverage assessment](docs/fla-ir-coverage-assessment.md) records
-current IR capabilities, semantic limits and proposed extension priorities.
-Schema v5 adds [typed Scan Stage DAGs](docs/API.md#scan-stage-dag-schema-v5),
+terms. Schema v5 adds [typed Scan Stage DAGs](docs/API.md#scan-stage-dag-schema-v5),
 Preconditioned KDA/GDN and stable LightNet, including shared auxiliary heads,
 state continuation, gradients and optional checkpoint.
 
@@ -46,7 +44,7 @@ uv pip install --no-deps -e .
 ```
 
 This installs MetaAttention itself from the local checkout. PyTorch is intentionally host-selected so CUDA, ROCm, and CPU environments can provide their own compatible build, and `--no-deps` avoids replacing that choice during editable install.
-The project pins the released TileLang `0.1.15` API in `pyproject.toml` and `uv.lock`. Specialized Stateful lowering families use TileLang `@tilelang.jit`/`@T.prim_func` kernels, including diagonal summaries/carries/readouts, low-rank/WY/checkpoint and backward paths, scalar and rank-one scans, generated expression loaders, and packed execution. See the [migration research and verification record](docs/tilelang-stateful-operator-research.md) for APIs, compatibility constraints, selected dispatch, and exact verification evidence.
+The project pins the released TileLang `0.1.15` API in `pyproject.toml` and `uv.lock`. Specialized Stateful lowering families use TileLang `@tilelang.jit`/`@T.prim_func` kernels, including diagonal summaries/carries/readouts, low-rank/WY/checkpoint and backward paths, scalar and rank-one scans, generated expression loaders, and packed execution.
 
 ### Verify the installation
 ```bash
@@ -136,8 +134,6 @@ nonzero caches under its separately documented timing contract.
 
 The [new example benchmark guide](examples/README.md#benchmark-against-fla)
 covers Delta Rule, KDA, GDN2, ComBa, IPLR/DPLR, Oja, Delta Product and ABC.
-[Measured H20 results](docs/stateful-example-benchmarks.md) include the selected
-execution paths, public-call and CUDA Graph latency, memory use and raw records.
 
 
 

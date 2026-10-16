@@ -114,7 +114,6 @@ WY, and dense/packed checkpoint forward/backward. Kernel binaries remain
 shape-specialized; dynamic public invocation sizes do not imply one symbolic
 Batch/Sequence binary.
 This correctness-first cutover does not promise the historical timings below.
-See `docs/tilelang-stateful-operator-research.md` for verification and constraints.
 
 
 ```py
@@ -265,17 +264,15 @@ invocation sequence starts and does not carry input history across calls.
 Product Injections may contain several typed factors; some specialized
 lowerings require two vector factors.
 
-See [ADR 0004](adr/0004-ordered-affine-state-transitions.md),
-[the domain glossary](../GLOSSARY.md) and
-[the FLA coverage assessment and proposed priorities](fla-ir-coverage-assessment.md).
+See [ADR 0004](adr/0004-ordered-affine-state-transitions.md) and
+[the domain glossary](../GLOSSARY.md).
 
 The first production Target is CUDA H20. It accepts BF16/FP32 inputs and
 outputs, FP32 State, canonical contiguous layouts, and Feature pairs in
 `{64,128} × {64,128}`. Invalid IR, unsupported composition, Target mismatch,
 invalid packed offsets, unsupported specialization, resource failure, and
-codegen failure surface as structured `StatefulCompilationError` values. The
-initial schema-v1 contract is in `docs/stateful-operator-ir-spec.md`; ADRs 0002
-and 0003 record the implemented language extensions described above.
+codegen failure surface as structured `StatefulCompilationError` values.
+ADRs 0002 and 0003 record the implemented language extensions described above.
 
 ### Scan Stage DAG (schema v5)
 
@@ -609,9 +606,6 @@ samples, the current public medians were HGRN `0.116 ms`, RWKV6 `0.217 ms`, GSA
 from `175001` to `156001` function calls, with `_validate_runtime` cumulative
 time decreasing from `0.025 s` to `0.018 s`. These are host-structure measurements
 and do not imply a GPU arithmetic change.
-
-
-See `docs/stateful-operator-ir-spec.md` for the complete contract.
 
 # Upcoming Features
 

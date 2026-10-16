@@ -14,9 +14,7 @@ caller. The factories in the table below read the state after the current
 token's update; other examples such as RWKV6 explicitly read prior state.
 
 Coverage distinguishes core recurrence, numerical range, State compatibility,
-complete layer behavior and measured performance. See
-[the FLA coverage assessment](../docs/fla-ir-coverage-assessment.md) for the
-current boundaries and proposed IR extensions. In particular,
+complete layer behavior and measured performance. In particular,
 `examples.linear_attention.forgetting_attention` currently delegates to Simple
 GLA; it does not implement FLA's pairwise softmax Forgetting Attention.
 
@@ -223,8 +221,3 @@ Graph-capture failures and missing FLA APIs are recorded explicitly. The runner
 writes `records.json`, `manifest.json`, `summary.csv`, and comparison plots.
 Records and CSV include `fla_baseline` and the actual `fla_function`; heatmaps
 are separate for recurrent and prefill comparisons.
-The [ABC fast-path assessment](../docs/abc-fast-path-assessment.md) describes
-how the existing readout lowering can support its auxiliary vector State and
-pointwise normalization stages.
-See [the measured H20 results](../docs/stateful-example-benchmarks.md) for the
-workload, selected lowerers and performance limits.

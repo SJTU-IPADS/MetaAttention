@@ -68,5 +68,4 @@ implicit second transition; `prior=True` names the pre-transition State instead.
   limit. Current Product Injections admit several typed factors, including
   Feature-free weights. The restriction on State Terms in Transitions still
   stands. Cross-State affine coupling, nonlinear transformations between scans,
-  and nonlinear State Feedback require different summary proofs; see
-  [the coverage assessment](../fla-ir-coverage-assessment.md).
+  and nonlinear State Feedback require different summary proofs.

@@ -1,9 +1,7 @@
 # Stateful Compiler Context
 
 Domain terms are defined in [GLOSSARY.md](GLOSSARY.md). This document records
-compiler behavior and implementation constraints. The current capability
-assessment and proposed extensions are in
-[the FLA coverage assessment](docs/fla-ir-coverage-assessment.md).
+compiler behavior and implementation constraints.
 
 ## Algorithm IR compatibility
 Compatibility means accepting previously unseen compositions expressible in the existing Algorithm IR and satisfying its validation and Scanable rules. It does not mean recognizing arbitrary frontend or backend IR directly.

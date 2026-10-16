@@ -129,47 +129,11 @@ made contiguous before reuse, as required by the public input contract.
 Performance thresholds are evaluated by the benchmark report, rather than
 asserted against shared-runner timing in ordinary unit/functional tests.
 
-## Initial H20 measurement
+## Benchmark archive
 
-The checked-in [records](measurements/stateful-generalization-h20/records.json),
-[CSV](measurements/stateful-generalization-h20/summary.csv),
-[envelope report](measurements/stateful-generalization-h20/report.md) and
-[manifest](measurements/stateful-generalization-h20/manifest.json) contain a
-96-point run: six families, levels 0/1/2/4, seeds 1701/2028, and T=512/2048.
-B=1, H=4, K=V=64; workspace limit 1 GiB; ten paired batches with three warmups
-and five repetitions. Physical GPU 3 was selected with `CUDA_VISIBLE_DEVICES=3`
-and appears as logical GPU 0 in the runner. The initial inventory recorded 2%
-utilization on that device; other devices were shared. PyTorch was
-2.11.0+cu128, CUDA 12.8 and TileLang 0.1.15.
-
-There were **94 correctness passes and two incorrect points**: value-axis
-propagation at level 1, seed 1701, at both sequence lengths. All six families
-exceeded the default 1.25x latency budget at level 1, so every measured envelope
-contains only level 0. All level-zero self-controls passed the stability check.
-
-At T=2048, the following ranges cover the two seeds, except the propagation
-level-1 entry, which has only one correct seed. Ratios above one mean slower
-than the same-shape level-zero control.
-
-| Mutation | Level 1 / control | Level 4 / control | Level-1 lowerer |
-| --- | ---: | ---: | --- |
-| Input expressions | 4.01–4.09x | 6.69–6.77x | `tilelang-elementwise` |
-| Feature propagation | 3.39x; other seed incorrect | 4.19–4.21x | `tilelang-elementwise` |
-| Ordered rank-one propagation | 11.13–11.36x | 15.91–15.94x | `tilelang-factored-recurrence` |
-| Additional writes | 11.00–11.04x | 18.16–18.40x | `tilelang-elementwise` |
-| Additional readouts | 9.21–9.28x | 11.62–11.84x | `tilelang-elementwise` |
-| Combined | 15.85–17.14x | 59.47–61.47x | `tilelang-factored-recurrence` |
-
-The control selected `tilelang-scalar-factorized`. For the input-expression
-family, level 1 changes the authored expression count from 9 to 25–27 without
-adding inputs, State dimensions, writes or outputs, and changes the selected
-lowerer. That is a useful first performance cliff to investigate. The other
-families also add mathematical work; their ratios alone do not isolate compiler
-overhead. These measurements establish a narrow tested latency envelope, even
-though most generated programs remain numerically correct. They do not justify
-a claim of stable performance for arbitrary future linear-attention algorithms.
-
-Reproduce this particular matrix:
+Do not treat a development scan as the performance archive. Raw records from the
+preliminary H20 run are not retained. Rerun the matrix and keep its manifest,
+summary and records together before reporting a stable envelope:
 
 ```bash
 CUDA_VISIBLE_DEVICES=3 .venv/bin/python testing/benchmark_stateful_generalization.py \
