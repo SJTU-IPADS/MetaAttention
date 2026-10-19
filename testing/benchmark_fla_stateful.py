@@ -223,6 +223,28 @@ def _integer(value: str) -> int | None:
         return None
 
 
+def _physical_gpu_uuid(index: int) -> str:
+    """Return the UUID for a physical nvidia-smi GPU index."""
+    result = subprocess.run(
+        [
+            "nvidia-smi",
+            f"--id={index}",
+            "--query-gpu=uuid",
+            "--format=csv,noheader",
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if result.returncode:
+        detail = result.stderr.strip() or result.stdout.strip() or "unknown error"
+        raise RuntimeError(f"nvidia-smi GPU UUID query failed: {detail}")
+    uuid = result.stdout.strip()
+    if not uuid:
+        raise RuntimeError(f"nvidia-smi returned no UUID for GPU {index}")
+    return uuid
+
+
 def _visible_physical_indices() -> set[int] | None:
     """Return physical IDs allowed by an existing CUDA visibility mask."""
     visible = os.environ.get("CUDA_VISIBLE_DEVICES")
@@ -232,20 +254,29 @@ def _visible_physical_indices() -> set[int] | None:
         raise RuntimeError(
             "CUDA_VISIBLE_DEVICES=-1 disables CUDA; no GPU can be selected"
         )
+    rows = {}
+    if "GPU-" in visible:
+        for line in subprocess.check_output(
+            ["nvidia-smi", "--query-gpu=index,uuid", "--format=csv,noheader"],
+            text=True,
+        ).splitlines():
+            index, uuid = (part.strip() for part in line.split(",", 1))
+            rows[uuid.removeprefix("GPU-").lower()] = int(index)
     indices: set[int] = set()
     for item in visible.split(","):
         item = item.strip()
         if not item or item.startswith("MIG-"):
             raise RuntimeError(
                 "CUDA_VISIBLE_DEVICES must contain physical numeric GPU IDs "
-                "for safe automatic selection"
+                "or GPU UUIDs for safe automatic selection"
             )
         try:
             indices.add(int(item))
-        except ValueError as error:
-            raise RuntimeError(
-                f"unsupported CUDA_VISIBLE_DEVICES entry: {item!r}"
-            ) from error
+        except ValueError:
+            physical = rows.get(item.removeprefix("GPU-").lower())
+            if physical is None:
+                raise RuntimeError(f"unsupported CUDA_VISIBLE_DEVICES entry: {item!r}")
+            indices.add(physical)
     return indices
 
 
@@ -677,8 +708,12 @@ def _fla_call(case, inputs, baseline=None):
             key: value.transpose(1, 2).contiguous() for key, value in values.items()
         }
         if name in {"linear", "simple-gla", "gla"}:
-            # These examples inject (key + 0.1) * value in FP32.
-            native["key"] = native["key"].float() + 0.1
+            # Evaluate input expressions before promoting operands for FLA.
+            # The DSL rounds these nodes in the input dtype.
+            key_dtype, query_dtype = native["key"].dtype, native["query"].dtype
+            native["key"] = (native["key"].float() + 0.1).to(key_dtype).float()
+            scale = native["query"].shape[-1] ** -0.5
+            native["query"] = (native["query"].float() * scale).to(query_dtype).float()
         if name == "retnet":
             native["gate"] = native["gate"].log()
         if name == "rwkv6":
@@ -691,8 +726,8 @@ def _fla_call(case, inputs, baseline=None):
             native["b"] = native["key"].float() * beta
             native["value"] = native["value"].float() * beta
         if baseline == "prefill" and name in {"linear", "simple-gla", "gla", "rwkv7"}:
-            # Chunk GEMMs require matching operand dtypes. Preserve the FP32
-            # authored transforms above rather than rounding them back to BF16.
+            # Chunk GEMMs require matching operand dtypes. Promote after
+            # authored expression evaluation without introducing another round.
             for key in ("query", "key", "value"):
                 native[key] = native[key].float()
         return native
@@ -702,7 +737,7 @@ def _fla_call(case, inputs, baseline=None):
         # Current FLA recurrent APIs use B,T,H,... inputs directly. Older
         # releases accepted head_first, but passing it breaks the checkout
         # selected by --fla-source.
-        kwargs = {}
+        kwargs = {"scale": 1.0} if name in {"linear", "simple-gla", "gla"} else {}
         if state_contract:
             memory = (
                 initial[0]
@@ -797,7 +832,9 @@ def _fla_call(case, inputs, baseline=None):
 
     preprocessing = f"{function_name}; transpose/contiguous"
     if name in {"linear", "simple-gla", "gla"}:
-        preprocessing += "; FP32 authored key + 0.1"
+        preprocessing += (
+            "; input-dtype key + 0.1 and query scaling, then FP32; FLA scale=1"
+        )
     elif name == "normalized-linear":
         preprocessing += "; FP32 key cumsum/denominator with continuation key_sum"
     elif name == "rwkv7":
@@ -1361,7 +1398,7 @@ def main() -> None:
     )
     if args.dry_run:
         return
-    os.environ["CUDA_VISIBLE_DEVICES"] = str(selected.index)
+    os.environ["CUDA_VISIBLE_DEVICES"] = _physical_gpu_uuid(selected.index)
     try:
         fla_source = _configure_fla_source(args.fla_source)
     except RuntimeError as error:

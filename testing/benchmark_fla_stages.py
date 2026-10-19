@@ -27,6 +27,7 @@ if str(ROOT) not in sys.path:
 
 from testing.benchmark_fla_stateful import (  # noqa: E402
     _meta_failure_status,
+    _physical_gpu_uuid,
     _visible_physical_indices,
     choose_idle_gpu,
     list_gpus,
@@ -736,7 +737,7 @@ def main(argv=None):
         selected = choose_idle_gpu(
             list_gpus(), requested=args.gpu, allowed_indices=_visible_physical_indices()
         )
-        os.environ["CUDA_VISIBLE_DEVICES"] = str(selected.index)
+        os.environ["CUDA_VISIBLE_DEVICES"] = _physical_gpu_uuid(selected.index)
     sys.path.insert(0, str(args.fla_path.resolve()))
     import torch
 

@@ -42,6 +42,7 @@ def _compile_scalar_factorized_dense_raw(
     threads: int,
     identity_propagation: bool,
     scale_steps: tuple[tuple[float, ...], ...] = ((), (), (), ()),
+    expression_nodes: tuple[tuple, ...] = ((), (), (), ()),
 ):
     import tilelang
     import tilelang.language as T
@@ -65,10 +66,19 @@ def _compile_scalar_factorized_dense_raw(
             False,
             propagation_offset,
             scale_steps[0],
+            expression_nodes[0],
         ),
     )
     left_transform = _transform(
-        T, (left_operation, left_scale, left_is_log_scale, left_offset, scale_steps[1])
+        T,
+        (
+            left_operation,
+            left_scale,
+            left_is_log_scale,
+            left_offset,
+            scale_steps[1],
+            expression_nodes[1],
+        ),
     )
     right_transform = _transform(
         T,
@@ -78,6 +88,7 @@ def _compile_scalar_factorized_dense_raw(
             right_is_log_scale,
             right_offset,
             scale_steps[2],
+            expression_nodes[2],
         ),
     )
     readout_transform = _transform(
@@ -88,6 +99,7 @@ def _compile_scalar_factorized_dense_raw(
             readout_is_log_scale,
             readout_offset,
             scale_steps[3],
+            expression_nodes[3],
         ),
     )
     preserve_scales = any(scale_steps)
@@ -469,6 +481,9 @@ def tilelang_scalar_factorized_dense_raw(
         threads,
         identity_propagation,
         tuple(getattr(expression, "scale_steps", ()) for expression in expressions),
+        tuple(
+            getattr(expression, "expression_nodes", ()) for expression in expressions
+        ),
     )
     kernel(propagation, left, right, readout, initial_state, output, final)
     return output, final if return_final_state else None

@@ -323,6 +323,7 @@ class CompiledScanStages:
             tuple(inputs.values()),
             tuple(s for recipe in recipes for s in recipe.states),
             True,
+            False,
             (),
         )
         # Count expression tensors as well as trajectory copies. Each typed DAG

@@ -49,6 +49,11 @@ def _reference(query, key, value, gate=None, initial_state=None):
         if initial_state is None
         else initial_state.float().clone()
     )
+    # Pointwise DSL nodes round in the input dtype before State algebra
+    # promotes their values to FP32. Keep this independent oracle faithful to
+    # that order, including BF16 addition and query scaling.
+    write_key = (key + 0.1).float()
+    read_query = (query * query.shape[-1] ** -0.5).float()
     outputs = []
     for index in range(query.shape[2]):
         if gate is not None:
@@ -58,13 +63,13 @@ def _reference(query, key, value, gate=None, initial_state=None):
                 state = state * gate[:, :, index, :, None].float().exp()
         state = state + torch.einsum(
             "bhk,bhv->bhkv",
-            (key[:, :, index].float() + 0.1),
+            write_key[:, :, index],
             value[:, :, index].float(),
         )
         outputs.append(
             torch.einsum(
                 "bhk,bhkv->bhv",
-                query[:, :, index].float() * query.shape[-1] ** -0.5,
+                read_query[:, :, index],
                 state,
             )
         )

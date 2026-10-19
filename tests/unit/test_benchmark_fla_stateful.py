@@ -451,7 +451,9 @@ def test_comba_prediction_conversion_depends_on_baseline(monkeypatch, baseline):
 
 
 @pytest.mark.parametrize("family", ["linear", "simple-gla", "gla", "rwkv7"])
-def test_prefill_preserves_fp32_authored_transforms(monkeypatch, family):
+def test_prefill_preserves_authored_transforms_before_fp32_promotion(
+    monkeypatch, family
+):
     import sys
     from types import SimpleNamespace
     import torch
@@ -469,7 +471,13 @@ def test_prefill_preserves_fp32_authored_transforms(monkeypatch, family):
     inputs = benchmark.inputs_for(operator, case, 3, torch.device("cpu"))
     values = runner._fla_call(case, inputs, "prefill").prepare(inputs)
     assert all(values[key].dtype == torch.float32 for key in ("query", "key", "value"))
-    torch.testing.assert_close(values["query"], inputs["query"].transpose(1, 2).float())
+    query = inputs["query"].transpose(1, 2)
+    expected_query = (
+        query.float()
+        if family == "rwkv7"
+        else (query.float() * case.dim**-0.5).to(query.dtype).float()
+    )
+    torch.testing.assert_close(values["query"], expected_query)
     if family == "rwkv7":
         beta = inputs["beta"].transpose(1, 2).unsqueeze(-1)
         torch.testing.assert_close(
@@ -482,7 +490,10 @@ def test_prefill_preserves_fp32_authored_transforms(monkeypatch, family):
         )
     else:
         torch.testing.assert_close(
-            values["key"], inputs["key"].transpose(1, 2).float() + 0.1
+            values["key"],
+            (inputs["key"].transpose(1, 2).float() + 0.1)
+            .to(inputs["key"].dtype)
+            .float(),
         )
 
 

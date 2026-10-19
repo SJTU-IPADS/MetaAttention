@@ -70,7 +70,7 @@ def _fixture(device, dims, dtype, mode, *, length=130, backward=False, steps=2):
     return compiled, inputs, state, offsets
 
 
-def _dense_oracle(inputs, state, steps):
+def _dense_oracle(inputs, state, steps, *, compact_writes=False):
     heads = state.shape[1]
     x = {
         name: tensor.repeat_interleave(heads // tensor.shape[1], dim=1)
@@ -82,11 +82,28 @@ def _dense_oracle(inputs, state, steps):
     )
     query = (x["query"] * scale).float()
     gate = x["gate"].exp()
-    left = [x[f"key_{j}"].float() for j in range(steps)]
-    right = [x[f"key_{j}"].float() for j in range(steps)]
-    coefficients = [-x[f"beta_{j}"] for j in range(steps)]
+    left, right, coefficients = [], [], []
+    for j in range(steps):
+        left.append(x[f"key_{j}"].float())
+        right.append(x[f"key_{j}"].float())
+        coefficients.append(-x[f"beta_{j}"])
     writes = []
     for j in range(steps):
+        if compact_writes:
+            # Expanding a suffix into separate outer products creates extra
+            # BF16 cast VJPs. Use independent tensor math for the compact
+            # factor graph, including distinct casts at each action use site.
+            key = x[f"key_{j}"].float()
+            value = (x[f"beta_{j}"][..., None] * x[f"value_{j}"]).float()
+            for later in range(j + 1, steps):
+                action_left = x[f"key_{later}"].float()
+                action_right = x[f"key_{later}"].float()
+                scalar = -x[f"beta_{later}"]
+                key = key + scalar[..., None] * action_left * (action_right * key).sum(
+                    -1, keepdim=True
+                )
+            writes.append((key, value, ()))
+            continue
         terms = [(j, ())]
         for later in range(j + 1, steps):
             terms += [
@@ -126,9 +143,9 @@ def _dense_oracle(inputs, state, steps):
     return torch.stack(output, dim=2), state
 
 
-def _oracle(inputs, state, offsets, steps):
+def _oracle(inputs, state, offsets, steps, *, compact_writes=False):
     if offsets is None:
-        return _dense_oracle(inputs, state, steps)
+        return _dense_oracle(inputs, state, steps, compact_writes=compact_writes)
     outputs, finals = [], []
     boundaries = (
         offsets.tolist()
@@ -144,6 +161,7 @@ def _oracle(inputs, state, offsets, steps):
             },
             state[segment : segment + 1],
             steps,
+            compact_writes=compact_writes,
         )
         outputs.append(output[0].transpose(0, 1))
         finals.append(final[0])
@@ -208,7 +226,9 @@ def test_ordered_input_and_initial_gradients(gpu_device, dims, dtype, mode, loss
         gpu_device, dims, dtype, mode, length=35, backward=True
     )
     actual = _invoke(compiled, inputs, state, offsets)
-    output, final = _oracle(inputs, state, offsets, 2)
+    # The forward tests retain the independently expanded algebra. Gradients
+    # must retain the compact factor graph's BF16 use-site cast boundaries.
+    output, final = _oracle(inputs, state, offsets, 2, compact_writes=True)
     dy = torch.linspace(-1, 1, output.numel(), device=gpu_device).reshape_as(output)
     actual_loss = (actual.outputs["second"] * dy).sum() if loss != "final" else 0
     expected_loss = (output * dy).sum() if loss != "final" else 0

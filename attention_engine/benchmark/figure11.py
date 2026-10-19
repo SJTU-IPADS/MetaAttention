@@ -9,9 +9,15 @@ from examples.reluattn_v2 import relu_attention as relu_attention_v2
 from examples.retnet_recurrent import retnet_recurrent
 from examples.retention_parallel import retention_parallel
 from examples.mamba2 import mamba2
-from attn_engine.stateful_operator import _compile_factory_profile
+from attn_engine.stateful_operator import (
+    StatefulCompilationError,
+    _compile_factory_profile,
+)
+from attn_engine.stateful.compile.tuning import GenericBaselineError
 from examples.mla_decode_v2 import mla_decode
 from examples.sparse_gqa_decode import sparse_gqa_decode
+from dataclasses import asdict
+import json
 from pathlib import Path
 from typing import Callable
 from .results import dump_bench_result
@@ -46,11 +52,13 @@ def bench_fig11(
     result_dir.mkdir(parents=True, exist_ok=True)
     cases = h100_cases()
     output_paths: list[Path] = []
+    measurements = []
     for dataset in dict.fromkeys(case.dataset for case in cases):
         dataset_cases = [case for case in cases if case.dataset == dataset]
         data = []
         log_section(dataset)
         for case in dataset_cases:
+            limitations = []
             result_dict = bench_attention(
                 case.attn_type,
                 case.batch,
@@ -67,6 +75,39 @@ def bench_fig11(
                 block_size=case.block_size,
                 sparse_ratio=case.sparse_ratio,
                 timer=timer,
+                limitations=limitations,
+            )
+            for method, metrics in result_dict.items():
+                for index, direction in enumerate(("forward", "backward")):
+                    latency = metrics[index] if metrics is not None else None
+                    limitation = (
+                        next(
+                            (
+                                item
+                                for item in limitations
+                                if item["direction"] == direction
+                            ),
+                            None,
+                        )
+                        if method == "MetaAttention"
+                        else None
+                    )
+                    measurements.append(
+                        {
+                            **asdict(case),
+                            "method": method,
+                            "direction": direction,
+                            "latency_ms": latency,
+                            "status": "MEASURED_UNVALIDATED"
+                            if latency is not None
+                            else (
+                                limitation["status"] if limitation else "NOT_MEASURED"
+                            ),
+                            "reason": limitation["reason"] if limitation else None,
+                        }
+                    )
+            (result_dir / "measurements.json").write_text(
+                json.dumps(measurements, indent=2) + "\n"
             )
             data.append((case.label, result_dict))
         output_paths.extend(dump_bench_result(dataset, data, result_dir))
@@ -89,6 +130,7 @@ def bench_attention(
     block_size: int | None = None,
     sparse_ratio: float | None = None,
     timer: Callable[..., float] | None = None,
+    limitations: list[dict] | None = None,
 ):
     if head_k is None:
         head_k = head
@@ -102,13 +144,17 @@ def bench_attention(
     if attn_type == "sigmoid_attn":
         return bench_sigmoidattention(Batch, head, seqlen_q, dim_qk, dim_v, **common)
     if attn_type == "gated_retention":
-        return bench_gated_retention(Batch, head, seqlen_q, dim_qk, dim_v, **common)
+        return bench_gated_retention(
+            Batch, head, seqlen_q, dim_qk, dim_v, limitations=limitations, **common
+        )
     if attn_type == "relu_attn":
         return bench_reluattention(Batch, head, seqlen_q, dim_qk, dim_v, **common)
     if attn_type == "retention_parallel":
         return bench_retention_parallel(Batch, head, seqlen_q, dim_qk, dim_v, **common)
     if attn_type == "retention_recurrent":
-        return bench_retnet_recurrent(Batch, head, seqlen_q, dim_qk, dim_v, **common)
+        return bench_retnet_recurrent(
+            Batch, head, seqlen_q, dim_qk, dim_v, limitations=limitations, **common
+        )
     if attn_type == "mamba2_ssm":
         return bench_mamba2_ssm(
             Batch,
@@ -119,6 +165,7 @@ def bench_attention(
             HK=head_k,
             HV=head_v,
             chunk_size=chunk_size,
+            limitations=limitations,
             **common,
         )
     if attn_type == "mla_attn":
@@ -582,6 +629,56 @@ def bench_reluattention(
     return result_dict
 
 
+def _stateful_capability_limit(error):
+    if isinstance(error, StatefulCompilationError):
+        if error.category in {"COMPILE_RESOURCE", "RUNTIME_RESOURCE"}:
+            return "RESOURCE_LIMIT", error.as_dict()
+        if (
+            error.category == "SPECIALIZATION"
+            and error.path == "role_sizes"
+            and "supported" in error.details
+        ):
+            return "UNSUPPORTED", error.as_dict()
+    if isinstance(error, GenericBaselineError) and error.failures:
+        resource_reasons = {
+            "runtime workload exceeds compiled resource envelope",
+            "tuning workload exceeds safe resource envelope",
+        }
+        if all(failure.reason in resource_reasons for failure in error.failures):
+            return "RESOURCE_LIMIT", [asdict(failure) for failure in error.failures]
+    raise error
+
+
+def _measure_stateful(
+    operator, profile, inputs, upstream, timer, require_grad, limitations
+):
+    """Measure each direction under its own compilation and resource contract."""
+    latencies = [None, None]
+    for index, direction in enumerate(("forward", "backward")):
+        if index and not require_grad:
+            continue
+        try:
+            module = _compile_factory_profile(
+                operator, **profile, autotune=True, backward=bool(index)
+            )
+            if index:
+                output = module(**inputs).outputs["output"]
+                latencies[index] = timer(
+                    lambda: output.backward(upstream, retain_graph=True)
+                )
+            else:
+                detached = {name: tensor.detach() for name, tensor in inputs.items()}
+                latencies[index] = timer(lambda: module(**detached).outputs["output"])
+        except (StatefulCompilationError, GenericBaselineError) as error:
+            status, reason = _stateful_capability_limit(error)
+            if limitations is not None:
+                limitations.append(
+                    {"direction": direction, "status": status, "reason": reason}
+                )
+            print(f"MetaAttention {direction} {status}: {reason}")
+    return tuple(latencies)
+
+
 def bench_gated_retention(
     B,
     H,
@@ -592,6 +689,7 @@ def bench_gated_retention(
     dtype=torch.bfloat16,
     require_grad=True,
     timer: Callable[..., float] | None = None,
+    limitations: list[dict] | None = None,
 ):
     timer = _resolve_timer(timer)
 
@@ -613,23 +711,15 @@ def bench_gated_retention(
 
     # ours
     attention_module = gated_retention(B, H, S, D, DV, dtype=dtype)
-    attention_module = _compile_factory_profile(
+    result_dict["MetaAttention"] = _measure_stateful(
         attention_module,
-        query_heads=H,
-        state_heads=H,
-        key_size=D,
-        value_size=DV,
-        autotune=True,
-        backward=require_grad,
+        dict(query_heads=H, state_heads=H, key_size=D, value_size=DV),
+        dict(query=q, key=k, value=v, gate=g),
+        do,
+        timer,
+        require_grad,
+        limitations,
     )
-    fwd_lat = timer(
-        lambda: attention_module(query=q, key=k, value=v, gate=g).outputs["output"]
-    )
-    if require_grad:
-        o = attention_module(query=q, key=k, value=v, gate=g).outputs["output"]
-        bwd_lat = timer(lambda: o.backward(do, retain_graph=True))
-
-    result_dict["MetaAttention"] = (fwd_lat, bwd_lat)
 
     return result_dict
 
@@ -644,6 +734,7 @@ def bench_retnet_recurrent(
     dtype=torch.bfloat16,
     require_grad=True,
     timer: Callable[..., float] | None = None,
+    limitations: list[dict] | None = None,
 ):
     timer = _resolve_timer(timer)
 
@@ -665,23 +756,15 @@ def bench_retnet_recurrent(
 
     # ours
     attention_module = retnet_recurrent(B, H, S, D, DV, dtype=dtype)
-    attention_module = _compile_factory_profile(
+    result_dict["MetaAttention"] = _measure_stateful(
         attention_module,
-        query_heads=H,
-        state_heads=H,
-        key_size=D,
-        value_size=DV,
-        autotune=True,
-        backward=require_grad,
+        dict(query_heads=H, state_heads=H, key_size=D, value_size=DV),
+        dict(query=q, key=k, value=v, gate=g),
+        do,
+        timer,
+        require_grad,
+        limitations,
     )
-    fwd_lat = timer(
-        lambda: attention_module(query=q, key=k, value=v, gate=g).outputs["output"]
-    )
-    if require_grad:
-        o = attention_module(query=q, key=k, value=v, gate=g).outputs["output"]
-        bwd_lat = timer(lambda: o.backward(do, retain_graph=True))
-
-    result_dict["MetaAttention"] = (fwd_lat, bwd_lat)
 
     return result_dict
 
@@ -748,6 +831,7 @@ def bench_mamba2_ssm(
     require_grad=True,
     chunk_size: int | None = None,
     timer: Callable[..., float] | None = None,
+    limitations: list[dict] | None = None,
 ):
     timer = _resolve_timer(timer)
 
@@ -778,7 +862,7 @@ def bench_mamba2_ssm(
     q_ours = query.clone().transpose(1, 2).contiguous()
     k_ours = key.clone().transpose(1, 2).contiguous()
     v_ours = value.clone().transpose(1, 2).contiguous()
-    A_ours = A_mamba[None, :].clone().contiguous()
+    A_ours = A_mamba[None, :, None].expand(1, HV, D).contiguous()
     dt_ours = dt_mamba.clone().transpose(1, 2).contiguous()
     if require_grad:
         do_ours = do.clone().transpose(1, 2).contiguous()
@@ -790,28 +874,22 @@ def bench_mamba2_ssm(
     dt_ours = dt_ours.detach().requires_grad_(require_grad)
 
     attention_module = mamba2(B, HQ, S, D, DV, HK, HV, dtype=dtype)
-    attention_module = _compile_factory_profile(
+    result_dict["MetaAttention"] = _measure_stateful(
         attention_module,
-        query_heads=HQ,
-        key_heads=HK,
-        value_heads=HV,
-        state_heads=HV,
-        key_size=D,
-        value_size=DV,
-        autotune=True,
-        backward=require_grad,
+        dict(
+            query_heads=HQ,
+            key_heads=HK,
+            value_heads=HV,
+            state_heads=HV,
+            key_size=D,
+            value_size=DV,
+        ),
+        dict(query=q_ours, key=k_ours, value=v_ours, A=A_ours, dt=dt_ours),
+        do_ours if require_grad else None,
+        timer,
+        require_grad,
+        limitations,
     )
-    fwd_lat = timer(
-        lambda: attention_module(
-            query=q_ours, key=k_ours, value=v_ours, A=A_ours, dt=dt_ours
-        ).outputs["output"]
-    )
-    if require_grad:
-        o = attention_module(
-            query=q_ours, key=k_ours, value=v_ours, A=A_ours, dt=dt_ours
-        ).outputs["output"]
-        bwd_lat = timer(lambda: o.backward(do_ours, retain_graph=True))
-    result_dict["MetaAttention"] = (fwd_lat, bwd_lat)
 
     # torch inductor
     try:

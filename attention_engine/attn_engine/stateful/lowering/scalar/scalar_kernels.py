@@ -28,8 +28,36 @@ def _transform(T, expression):
     operation, scale, is_log = expression[:3]
     offset = expression[3] if len(expression) > 3 else 0.0
     scale_steps = expression[4] if len(expression) > 4 else ()
+    nodes = expression[5] if len(expression) > 5 else ()
 
     def transform(value):
+        if nodes:
+            values = []
+            for node in nodes:
+                if node[0] == "input":
+                    result = value
+                elif node[0] == "constant":
+                    result = float(torch.tensor(node[1], dtype=node[2]).item())
+                elif node[0] == "binary":
+                    left, right = values[node[1]], values[node[2]]
+                    result = left + right if node[4] == "+" else left * right
+                    if node[3] == torch.bfloat16:
+                        result = T.cast(T.cast(result, "bfloat16"), "float32")
+                elif node[0] == "unary":
+                    operand = values[node[1]]
+                    result = (
+                        -operand
+                        if node[2] == "neg"
+                        else T.cast(
+                            T.call_extern("float64", "exp", T.cast(operand, "float64")),
+                            "float32",
+                        )
+                    )
+                else:
+                    raise ValueError(f"unsupported scalar expression node: {node[0]}")
+                values.append(result)
+            return values[-1]
+
         # The fast exp intrinsic can differ by one ULP near one. Repeated
         # weak decay amplifies that error in long FP32 State recurrences.
         if operation == "exp":
@@ -563,6 +591,7 @@ def scalar_chunked_dense_raw(
             expression.is_log_scale,
             getattr(expression, "offset", 0.0),
             getattr(expression, "scale_steps", ()),
+            getattr(expression, "expression_nodes", ()),
         )
         for expression in expressions
     )

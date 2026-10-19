@@ -27,6 +27,8 @@ class ScalarExpressionIR:
     offset: float = 0.0
     # Nested FP32 multiplies execute from the Input outward, without folding.
     scale_steps: tuple[float, ...] = ()
+    # BF16 input arithmetic must round at each authored expression node.
+    expression_nodes: tuple[tuple[Any, ...], ...] = ()
 
 
 @dataclass(frozen=True)
@@ -1312,6 +1314,7 @@ def _dense_scalar_binding(
         Sequence,
     )
 
+    authored_expression = expression
     operation = "identity"
     scale = 1.0
     offset = 0.0
@@ -1386,6 +1389,16 @@ def _dense_scalar_binding(
         spec.roles.index(Sequence),
         feature_axis,
     )
+    expression_nodes = ()
+    if spec.dtype == torch.bfloat16:
+        from ..lowering.expression.dense_expression import compile_dense_expression
+
+        dense = compile_dense_expression(
+            authored_expression, {spec.name: spec}, feature_role
+        )
+        if dense is None:
+            return None
+        expression_nodes = dense.loader.nodes
     return binding, ScalarExpressionIR(
-        spec.name, operation, scale, is_log_scale, offset, scale_steps
+        spec.name, operation, scale, is_log_scale, offset, scale_steps, expression_nodes
     )

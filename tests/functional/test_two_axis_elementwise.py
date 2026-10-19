@@ -64,7 +64,9 @@ def _bindings(device, lengths: tuple[int, ...], heads: int, dim: int):
 
 
 def _reference(bindings, lengths, initial, scale):
-    """FP32 token recurrence, one State per logical sequence."""
+    """FP32 State recurrence with the factory's input-dtype expressions."""
+    write_key = (bindings["key"] + 0.1).float()
+    read_query = (bindings["query"] * scale).float()
     outputs = []
     states = []
     offset = 0
@@ -76,13 +78,11 @@ def _reference(bindings, lengths, initial, scale):
             ][token].float().exp().unsqueeze(-2)
             state = state * decay + torch.einsum(
                 "hk,hv->hkv",
-                bindings["key"][token].float(),
+                write_key[token],
                 bindings["value"][token].float(),
             )
             outputs.append(
-                torch.einsum(
-                    "hk,hkv->hv", bindings["query"][token].float() * scale, state
-                ).to(torch.bfloat16)
+                torch.einsum("hk,hkv->hv", read_query[token], state).to(torch.bfloat16)
             )
         states.append(state)
         offset += length

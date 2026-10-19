@@ -32,6 +32,26 @@ def _workload(name, length=5):
     return operator, sizes, inputs
 
 
+@pytest.mark.parametrize("dtype", [torch.float32, torch.bfloat16])
+def test_linear_oracle_preserves_input_expression_rounding(dtype):
+    operator, sizes, inputs = _workload("linear", length=3)
+    inputs = {name: value.to(dtype) for name, value in inputs.items()}
+    outputs, states = _token_oracle(operator, inputs, sizes)
+    scale = torch.tensor(inputs["query"].shape[-1] ** -0.5)
+    query = (inputs["query"].float() * scale).to(dtype).float()
+    key = (inputs["key"].float() + torch.tensor(0.1)).to(dtype).float()
+    value = inputs["value"].float()
+    state = torch.zeros_like(states["memory"])
+    expected = []
+    for token in range(query.shape[2]):
+        state = state + key[:, :, token, :, None] * value[:, :, token, None, :]
+        expected.append((query[:, :, token, :, None] * state).sum(-2))
+    torch.testing.assert_close(states["memory"], state, rtol=0, atol=0)
+    torch.testing.assert_close(
+        outputs["output"], torch.stack(expected, dim=2), rtol=0, atol=0
+    )
+
+
 def test_missing_final_state_is_invalid_only_for_state_contracts():
     expected = {"output": torch.tensor([[[[2.0]]]])}
     states = {"memory": torch.tensor([[[[3.0]]]])}
@@ -111,13 +131,24 @@ def test_rank_one_oracle_applies_decay_before_removal():
     torch.testing.assert_close(actual["memory"], expected, rtol=1e-6, atol=1e-6)
 
 
-def test_based_oracle_matches_polynomial_attention():
+@pytest.mark.parametrize("dtype", [torch.float32, torch.bfloat16])
+def test_based_oracle_matches_polynomial_attention(dtype):
     operator, sizes, inputs = _workload("based")
+    inputs = {name: value.to(dtype) for name, value in inputs.items()}
     actual, _ = _token_oracle(operator, inputs, sizes)
-    q, k, v = (inputs[name].float() for name in ("query", "key", "value"))
-    scores = torch.einsum("bhtk,bhsk->bhts", q * (q.shape[-1] ** -0.5), k)
-    weights = (1 + scores + 0.5 * scores.square()).tril()
-    expected = torch.einsum("bhts,bhsv->bhtv", weights, v) / (
+    q, k, v = (inputs[name] for name in ("query", "key", "value"))
+    q = (q.float() * torch.tensor(q.shape[-1] ** -0.5)).to(dtype)
+    scores = torch.einsum("bhtk,bhsk->bhts", q.float(), k.float())
+    if dtype == torch.float32:
+        quadratic = scores.square()
+    else:
+        # Authored BF16 Outer nodes round before the FP32 State algebra.
+        # Compare all causal token pairs independently of the token recurrence.
+        q2 = (q.unsqueeze(-1) * q.unsqueeze(-2)).flatten(-2).float()
+        k2 = (k.unsqueeze(-1) * k.unsqueeze(-2)).flatten(-2).float()
+        quadratic = torch.einsum("bhtk,bhsk->bhts", q2, k2)
+    weights = (1 + scores + 0.5 * quadratic).tril()
+    expected = torch.einsum("bhts,bhsv->bhtv", weights, v.float()) / (
         weights.sum(-1, keepdim=True) + 1e-6
     )
     torch.testing.assert_close(actual["output"], expected, rtol=1e-6, atol=1e-6)
@@ -195,14 +226,35 @@ def test_delta_product_oracle_preserves_interleaved_writes_and_readout_timing():
 def test_delta_product_oracle_matches_independent_residual_recurrence(
     steps, dtype, nonzero_initial
 ):
-    from tests.unit.test_delta_family_examples import _case, _reference
+    from tests.unit.test_delta_family_examples import _case
 
     operator, sizes, inputs, initial = _case("delta_product", dtype=dtype, steps=steps)
     if not nonzero_initial:
         initial = {name: torch.zeros_like(state) for name, state in initial.items()}
-    expected, expected_states = _reference(
-        "delta_product", inputs, initial, steps=steps
-    )
+    state = initial["memory"].clone()
+    heads = state.shape[1]
+    values = {
+        name: value.repeat_interleave(heads // value.shape[1], dim=1)
+        for name, value in inputs.items()
+    }
+    # Independent residual updates preserve the authored query's BF16 scaling
+    # before FP32 contraction; the beta/value expression promotes to FP32.
+    scale = torch.tensor(values["query"].shape[-1] ** -0.5)
+    query = (values["query"].float() * scale).to(dtype).float()
+    expected = []
+    for token in range(query.shape[2]):
+        state = state * values["gate"][:, :, token].exp()[..., None, None]
+        for step in range(steps):
+            key = values[f"key_{step}"][:, :, token].float()
+            value = values[f"value_{step}"][:, :, token].float()
+            beta = values[f"beta_{step}"][:, :, token].float()
+            residual = value - torch.einsum("bhk,bhkv->bhv", key, state)
+            state = state + key.unsqueeze(-1) * (
+                beta.unsqueeze(-1) * residual
+            ).unsqueeze(-2)
+        expected.append(torch.einsum("bhk,bhkv->bhv", query[:, :, token], state))
+    expected = torch.stack(expected, dim=2)
+    expected_states = {"memory": state}
     outputs, states = _token_oracle(
         operator, inputs, sizes, initial_state=initial if nonzero_initial else None
     )

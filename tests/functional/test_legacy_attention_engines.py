@@ -358,8 +358,9 @@ def test_gated_retention_packed_scalar_inference(gpu_device, seed):
     )
 
 
-def test_legacy_sigmoid(gpu_device, seed):
-    batch, heads, seqlen, dim, dim_value = 1, 32, 2048, 128, 128
+@pytest.mark.parametrize("batch", [1, 8])
+def test_legacy_sigmoid(batch, gpu_device, seed):
+    heads, seqlen, dim, dim_value = 32, 2048, 128, 128
     dtype = torch.float16
     module = sigmoid_attention(batch, heads, seqlen, dim, dim_value, tune=True)
     query = torch.randn(
@@ -477,8 +478,9 @@ def test_legacy_retnet_recurrent(gpu_device, seed):
     )
 
 
-def test_legacy_relu(gpu_device, seed):
-    batch, heads, seqlen, dim, dim_value = 1, 6, 2048, 64, 64
+@pytest.mark.parametrize("batch,seqlen", [(1, 2048), (32, 512), (32, 1024)])
+def test_legacy_relu(batch, seqlen, gpu_device, seed):
+    heads, dim, dim_value = 6, 64, 64
     dtype = torch.float16
     module = relu_attention(
         batch, heads, seqlen, dim, dim_value, dtype=dtype, tune=True

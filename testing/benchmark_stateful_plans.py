@@ -419,9 +419,13 @@ def _token_oracle(operator, inputs, sizes, *, initial_state=None):
         for spec in algorithm.states
     }
     specs = {spec.name: spec for spec in algorithm.states}
-    bound = {name: value.detach().cpu().float() for name, value in inputs.items()}
+    # Preserve authored input dtypes through pointwise expressions. BF16 leaves
+    # must round at each DSL node before their values enter FP32 State algebra.
+    bound = {name: value.detach().cpu() for name, value in inputs.items()}
 
     def align(value, roles, target):
+        if value.ndim == 0:
+            return value
         ordered = tuple(role for role in target if role in roles)
         value = value.permute(0, 1, *(2 + roles.index(role) for role in ordered))
         return value.reshape(
@@ -454,7 +458,7 @@ def _token_oracle(operator, inputs, sizes, *, initial_state=None):
                 raise ValueError("oracle HeadMapping is not an integral replication")
             return value.repeat_interleave(heads // value.shape[1], dim=1), features
         if isinstance(node, ir.Constant):
-            return torch.tensor(node.value, dtype=torch.float32).reshape(1, 1), ()
+            return torch.tensor(node.value, dtype=node.dtype), ()
         if isinstance(node, ir.Shift):
             if token < node.lag:
                 value, roles = evaluate(node.operand, 0, prior)
@@ -487,9 +491,21 @@ def _token_oracle(operator, inputs, sizes, *, initial_state=None):
                 )
             left, right = align(left, lr, roles), align(right, rr, roles)
             if isinstance(node, ir.Contract):
-                return (left * right).sum(2 + roles.index(node.role)), tuple(
-                    r for r in roles if r != node.role
-                )
+                return (left.float() * right.float()).sum(
+                    2 + roles.index(node.role)
+                ), tuple(r for r in roles if r != node.role)
+            # Preserve each node's result dtype without letting CPU wrapped
+            # scalar arithmetic round its constant before the operation.
+            # Native loaders compute from the declared constant, then round
+            # the result at the authored BF16 node.
+            dtype = (
+                right.dtype
+                if left.ndim == 0 and right.ndim != 0
+                else left.dtype
+                if right.ndim == 0 and left.ndim != 0
+                else torch.promote_types(left.dtype, right.dtype)
+            )
+            left, right = left.float(), right.float()
             value = (
                 left + right
                 if isinstance(node, ir.Add)
@@ -497,14 +513,19 @@ def _token_oracle(operator, inputs, sizes, *, initial_state=None):
                 if isinstance(node, ir.Multiply)
                 else left / right
             )
-            return value, roles
+            return value.to(dtype), roles
         value, roles = evaluate(node.operand, token, prior)
+        if isinstance(node, ir.Cast):
+            return value.to(node.dtype), roles
+        if isinstance(node, ir.Negate):
+            return -value, roles
+        value = value.float()
         if isinstance(node, ir.Softmax):
             return value.softmax(2 + roles.index(node.role)), roles
         if isinstance(node, ir.Clamp):
             return value.clamp(node.minimum, node.maximum), roles
         unary = {
-            ir.Negate: torch.neg,
+            ir.Abs: torch.abs,
             ir.Exp: torch.exp,
             ir.Log: torch.log,
             ir.Sigmoid: torch.sigmoid,
@@ -553,9 +574,11 @@ def _token_oracle(operator, inputs, sizes, *, initial_state=None):
                 else readout.expression
             )
             value, roles = evaluate(expression, token, prior)
+            if value.ndim == 0:
+                value = value.expand(batch, heads)
             if not roles:
                 value = value.unsqueeze(-1)
-            outputs[readout.name].append(value)
+            outputs[readout.name].append(value.float())
     return {
         name: torch.stack(values, dim=2) for name, values in outputs.items()
     }, states
