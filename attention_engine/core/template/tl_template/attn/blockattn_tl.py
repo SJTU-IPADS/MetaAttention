@@ -19,8 +19,8 @@ try:
     attn_device = AttnDevice[device_cap]()
 except KeyError:
     attn_device = H100()
-    
-    
+
+
 # TL_GLOBAL_FUNC = """
 def make_dq_layout(dQ):
     # atomicAdd can not be vectorized, so we need to reorder dq to match the 8x8 gemm fragment
@@ -30,14 +30,14 @@ def make_dq_layout(dQ):
 
 
 def get_configs(DHEAD, DHEADV, device=H100()):
-    
+
     # scheduling space
     block_M = [64, 128, 256]
     block_N = [32, 64, 128, 256]
     num_stages = [1, 2]
     thread_num = [128, 256]
     shared_fuse = [{{shared_fuse}},]# [True, False]
-    
+
     # device config
     MMA_ATOM_M = device.mma_primitive[0]# 64
     MMA_ATOM_N = device.mma_primitive[1]# 16
@@ -45,10 +45,10 @@ def get_configs(DHEAD, DHEADV, device=H100()):
     smem_cap = device.smem_cap # 232448
     reg_cap = device.reg_cap * 4 # 65536 * 4
     reg_cap_per_thread = device.register_per_thread * 4 # 255 * 4
-    
-    
+
+
     _configs = list(itertools.product(block_M, block_N, num_stages, thread_num, shared_fuse))
-    
+
     configs = []
     # Inter tile
     block_M = [bM for bM in block_M if bM % MMA_ATOM_M == 0]
@@ -79,11 +79,11 @@ def get_configs(DHEAD, DHEADV, device=H100()):
             if len(plans) > 0:
                 break
         configs.extend(plans)
-                    
+
     return configs
- 
+
 # TL_KERNEL = """
-def kernel(batch, heads, seq_len, dim, dimv, 
+def kernel(batch, heads, seq_len, dim, dimv,
            downsample_len_q, downsample_len_kv, tune=False):
 
     # scale = (1.0 / dim) ** 0.5 * 1.44269504  # log2(e) # 0.69314718  loge(2)
@@ -96,12 +96,12 @@ def kernel(batch, heads, seq_len, dim, dimv,
     accum_dtype = "float"
     block_mask_dtype = "int8"
     is_casual = {{is_casual}} # True
-    
+
     def kernel_func(
         block_M = None, block_N = None, num_stages = None, thread_num = None,
         shared_fuse = None):
 
-        
+
         # shared_fuse = True
         assert(downsample_len_kv <= seq_len_kv // block_N)
         assert(downsample_len_q <= seq_len // block_M)
@@ -111,11 +111,11 @@ def kernel(batch, heads, seq_len, dim, dimv,
         # TL_MAIN = """
         @T.macro
         {{score_mod_func_def | indent(8)}}
-        
+
         @T.macro
         {{online_func_def | indent(8)}}
 
-            
+
         @T.prim_func
         def main(
             Q: T.Tensor(shape, dtype), # type: ignore
@@ -140,7 +140,7 @@ def kernel(batch, heads, seq_len, dim, dimv,
                 # acc_o = T.alloc_fragment([block_M, dimv], accum_dtype)
 
                 {{custom_fwd_inputs_init | indent(16)}}
-                
+
                 # block_mask = T.alloc_local([seq_len_kv//block_N], block_mask_dtype)
                 has_valid_block = T.alloc_var("bool")
                 q_idxl = T.alloc_fragment([1], "int32")
@@ -192,14 +192,14 @@ def kernel(batch, heads, seq_len, dim, dimv,
                                 )
                         else:
                             T.clear(scores)
-                        
+
                         T.gemm(Q_shared, K_shared, scores, transpose_B=True, policy= (T.GemmWarpPolicy.FullRow if (not shared_fuse) else T.GemmWarpPolicy.FullCol))
                         T.copy(V[bz, k * block_N : (k + 1) * block_N, by, :], V_shared)
-                            
+
                         {{custom_fwd_inputs_load_s2r | indent(24)}}
                         # call score_mod
                         {{call_score_mod | indent(24)}}
-                            
+
                         # call online_func
                         if shared_fuse:
                             T.copy(scores, scores_shared)
@@ -213,7 +213,7 @@ def kernel(batch, heads, seq_len, dim, dimv,
 
                         for i, j in T.Parallel(block_M, dimv):
                             acc_o[i, j] *= {{o_scale_varname}}[i]
-                        
+
                         # update online_rowscales
                         {{online_rowscales_update | indent(24)}}
 
@@ -229,9 +229,9 @@ def kernel(batch, heads, seq_len, dim, dimv,
 
                 # save final_rowscale
                 {{final_rowscales_save | indent(16)}}
-            
+
         return main
-    
+
     if tune:
         @autotune(
             configs=get_configs(dim, dimv, device=attn_device),
@@ -247,7 +247,7 @@ def kernel(batch, heads, seq_len, dim, dimv,
     else:
         def kernel(block_M, block_N, num_stages, thread_num, shared_fuse):
             return kernel_func(block_M, block_N, num_stages, thread_num, shared_fuse)
-        
+
         return kernel
 
 # TL_KERNEL_BWD_DOO = """
@@ -281,7 +281,7 @@ def flashattn_bwd_preprocess(batch, heads, seq_len, dim, dimv):
     return flash_bwd_prep
 
 # TL_KERNEL_BWD = """
-def flashattn_bwd(batch, heads, seq_len, dim, dimv, is_casual, 
+def flashattn_bwd(batch, heads, seq_len, dim, dimv, is_casual,
                 downsample_len_q, downsample_len_kv,
                 block_M, block_N, thread_num = 128*2):
     sm_scale = (1.0 / dim) ** 0.5
@@ -292,7 +292,7 @@ def flashattn_bwd(batch, heads, seq_len, dim, dimv, is_casual,
     seq_len_kv = seq_len
     dtype = "{{tl_dtype}}" # "float16"
     accum_dtype = "float"
-    
+
     assert(downsample_len_kv <= seq_len_kv // block_N)
     assert(downsample_len_q <= seq_len // block_M)
     block_M_ratio = seq_len_kv // block_M // downsample_len_q
@@ -308,7 +308,7 @@ def flashattn_bwd(batch, heads, seq_len, dim, dimv, is_casual,
         ):
         {{score_mod_fwd_body | indent(8)}}
         pass
-    
+
     @T.macro
     def score_mod_backward(
         # scores: T.Tensor([block_M, block_N], accum_dtype),
@@ -363,7 +363,7 @@ def flashattn_bwd(batch, heads, seq_len, dim, dimv, is_casual,
             {{score_mod_bwd_inputs_declare | indent(12)}}
             # score_mod_declare_shared
             {{score_mod_bwd_inputs_declare_shared | indent(12)}}
-            
+
             do = T.alloc_shared([block_N, dimv], dtype)
             dv = T.alloc_fragment([block_M, dimv], accum_dtype)
             dk = T.alloc_fragment([block_M, dim], accum_dtype)
@@ -397,7 +397,7 @@ def flashattn_bwd(batch, heads, seq_len, dim, dimv, is_casual,
                     {{custom_fwd_inputs_load_shared_bwd | indent(20)}}
                     T.clear(qkT)
                     T.gemm(K_shared, q, qkT, transpose_B=True, policy=T.GemmWarpPolicy.FullRow)
-                    
+
                     # score_mod
                     score_mod({{score_mod_inputs_bwd_list}}) # qkT,
 
@@ -406,7 +406,7 @@ def flashattn_bwd(batch, heads, seq_len, dim, dimv, is_casual,
 
                     # online_func_fwd
                     {{ online_func_fwd | indent(20) }}
-                    
+
                     # TODO: is causal
                     if is_casual or {{is_mask_mod_code}}:
                         for i, j in T.Parallel(block_M, block_N):
@@ -418,11 +418,11 @@ def flashattn_bwd(batch, heads, seq_len, dim, dimv, is_casual,
                             {{score_mod_output_var}}[i, j] = T.if_then_else(
                                 {{mask_output}}, {{score_mod_output_var}}[i, j], 0
                             )
-                    
+
                     T.copy(dO[bz, k * block_N : (k + 1) * block_N, bx, :], do)
                     T.clear(dsT)
                     T.gemm(V_shared, do, dsT, transpose_B=True, policy=T.GemmWarpPolicy.FullRow)
-                    
+
                     T.copy({{score_mod_output_var}}, qkT_cast)
                     T.gemm(qkT_cast, do, dv, policy=T.GemmWarpPolicy.FullRow)
 
@@ -445,11 +445,11 @@ def flashattn_bwd(batch, heads, seq_len, dim, dimv, is_casual,
 
                     # custom_bwd
                     {{custom_bwd_body | indent(20)}}
-                    
+
                     # score_mod_backward
-                    score_mod_backward({{score_mod_bwd_inputs_list}}) #  qkT, 
-                    
-                                    
+                    score_mod_backward({{score_mod_bwd_inputs_list}}) #  qkT,
+
+
                     T.copy(dsT, dsT_cast)
                     T.gemm(dsT_cast, q, dk, policy=T.GemmWarpPolicy.FullRow)
 
@@ -463,7 +463,7 @@ def flashattn_bwd(batch, heads, seq_len, dim, dimv, is_casual,
             T.copy(dv, dV[bz, by * block_M : (by + 1) * block_M, bx, :])
             T.copy(dk, dK[bz, by * block_M : (by + 1) * block_M, bx, :])
 
-    return flash_bwd              
+    return flash_bwd
 
 # TL_KERNEL_BWD_POSTPROCESS = """
 def flashattn_bwd_postprocess(batch, heads, seq_len, dim, dimv):
@@ -502,11 +502,11 @@ def get_problem_keys():
         "downsample_len_q": {{SEQ_LEN}} // {{infer_mask_block_M}},
         "downsample_len_kv": {{SEQ_LEN}} // {{infer_mask_block_N}},
     }
-    
+
 def tune(tune_file, kernel_profiler, problem_keys)->Tuple:
     tuned_config = None
     pk = problem_keys
-    
+
     folder_path = os.path.dirname(tune_file)
     if folder_path and not os.path.exists(folder_path):
         os.makedirs(folder_path, exist_ok=True)
@@ -535,7 +535,7 @@ def tune(tune_file, kernel_profiler, problem_keys)->Tuple:
             json.dump(configs, f, indent=4)
     return tuned_config
 
-    
+
 # forward
 tuned_config = None
 if TUNE:
@@ -555,7 +555,7 @@ else:
         'num_stages': {{stages}},
         'thread_num': {{thread_num}},
         'shared_fuse': {{shared_fuse}}
-    }    
+    }
 block_mask_M = {{infer_mask_block_M}}# 128
 block_mask_N = {{infer_mask_block_N}}# 128
 downsample_len_q = {{SEQ_LEN}} // block_mask_M
@@ -563,18 +563,18 @@ downsample_len_kv = {{SEQ_LEN}} // block_mask_N
 
 program = kernel({{BATCH}}, {{HEADS}}, {{SEQ_LEN}}, {{DIM}}, {{DIMV}}, downsample_len_q, downsample_len_kv)(**tuned_config)
 mod = tl.compile(program, out_idx={{output_idx_list}})
-        
+
 mod_prep = tl.compile(
-    flashattn_bwd_preprocess({{BATCH}}, {{HEADS}}, {{SEQ_LEN}}, {{DIM}}, {{DIMV}}), 
+    flashattn_bwd_preprocess({{BATCH}}, {{HEADS}}, {{SEQ_LEN}}, {{DIM}}, {{DIMV}}),
     out_idx=[2],
 )
 mod_post = tl.compile(
-    flashattn_bwd_postprocess({{BATCH}}, {{HEADS}}, {{SEQ_LEN}}, {{DIM}}, {{DIMV}}), 
+    flashattn_bwd_postprocess({{BATCH}}, {{HEADS}}, {{SEQ_LEN}}, {{DIM}}, {{DIMV}}),
     out_idx=[1],
 )
 mod_bwd = tl.compile(
     flashattn_bwd(
-        {{BATCH}}, {{HEADS}}, {{SEQ_LEN}}, {{DIM}}, {{DIMV}}, {{is_casual}}, 
+        {{BATCH}}, {{HEADS}}, {{SEQ_LEN}}, {{DIM}}, {{DIMV}}, {{is_casual}},
         downsample_len_q, downsample_len_kv, {{block_M_bwd}}, {{block_N_bwd}}, {{thread_num_bwd}}
     ),
     out_idx={{bwd_output_idx_list}},
@@ -597,7 +597,7 @@ class _attention(torch.autograd.Function):
             o, *final_scale = mod(q, k, v, *custom_fwd_inputs, block_sparse_mask)
         ctx.save_for_backward(q, k, v, o, block_sparse_mask, *custom_fwd_inputs, *final_scale)
         return o
-    
+
     @staticmethod
     def backward(ctx, do):
         q, k, v, o, block_sparse_mask, *tmp = ctx.saved_tensors
@@ -607,12 +607,12 @@ class _attention(torch.autograd.Function):
         # final_rowscales = tmp[-{{final_rowscales_length}}:]
         maybe_contiguous = lambda x: x.contiguous() if x.stride(-1) != 1 else x
         do, q, k, v, o = [maybe_contiguous(x) for x in (do, q, k, v, o)]
-        
+
         global mod_prep, mod_post, mod_bwd
         if {{isused_doosum}}:
             delta = mod_prep(o, do)
         # TODO: causal
-        
+
         dq = torch.zeros_like(q, dtype=torch.float32)
         if {{isused_doosum}}:
             dk, dv = mod_bwd(q, k, v, do, *tmp, delta, block_sparse_mask, dq)
@@ -623,5 +623,3 @@ class _attention(torch.autograd.Function):
         return dq, dk, dv, *none_list, None
 
 attention = _attention.apply
-
-

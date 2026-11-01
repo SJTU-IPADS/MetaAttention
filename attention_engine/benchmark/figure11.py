@@ -9,8 +9,15 @@ from examples.reluattn_v2 import relu_attention as relu_attention_v2
 from examples.retnet_recurrent import retnet_recurrent
 from examples.retention_parallel import retention_parallel
 from examples.mamba2 import mamba2
+from attn_engine.stateful_operator import (
+    StatefulCompilationError,
+    _compile_factory_profile,
+)
+from attn_engine.stateful.compile.tuning import GenericBaselineError
 from examples.mla_decode_v2 import mla_decode
 from examples.sparse_gqa_decode import sparse_gqa_decode
+from dataclasses import asdict
+import json
 from pathlib import Path
 from typing import Callable
 from .results import dump_bench_result
@@ -45,11 +52,13 @@ def bench_fig11(
     result_dir.mkdir(parents=True, exist_ok=True)
     cases = h100_cases()
     output_paths: list[Path] = []
+    measurements = []
     for dataset in dict.fromkeys(case.dataset for case in cases):
         dataset_cases = [case for case in cases if case.dataset == dataset]
         data = []
         log_section(dataset)
         for case in dataset_cases:
+            limitations = []
             result_dict = bench_attention(
                 case.attn_type,
                 case.batch,
@@ -66,6 +75,39 @@ def bench_fig11(
                 block_size=case.block_size,
                 sparse_ratio=case.sparse_ratio,
                 timer=timer,
+                limitations=limitations,
+            )
+            for method, metrics in result_dict.items():
+                for index, direction in enumerate(("forward", "backward")):
+                    latency = metrics[index] if metrics is not None else None
+                    limitation = (
+                        next(
+                            (
+                                item
+                                for item in limitations
+                                if item["direction"] == direction
+                            ),
+                            None,
+                        )
+                        if method == "MetaAttention"
+                        else None
+                    )
+                    measurements.append(
+                        {
+                            **asdict(case),
+                            "method": method,
+                            "direction": direction,
+                            "latency_ms": latency,
+                            "status": "MEASURED_UNVALIDATED"
+                            if latency is not None
+                            else (
+                                limitation["status"] if limitation else "NOT_MEASURED"
+                            ),
+                            "reason": limitation["reason"] if limitation else None,
+                        }
+                    )
+            (result_dir / "measurements.json").write_text(
+                json.dumps(measurements, indent=2) + "\n"
             )
             data.append((case.label, result_dict))
         output_paths.extend(dump_bench_result(dataset, data, result_dir))
@@ -88,6 +130,7 @@ def bench_attention(
     block_size: int | None = None,
     sparse_ratio: float | None = None,
     timer: Callable[..., float] | None = None,
+    limitations: list[dict] | None = None,
 ):
     if head_k is None:
         head_k = head
@@ -101,13 +144,17 @@ def bench_attention(
     if attn_type == "sigmoid_attn":
         return bench_sigmoidattention(Batch, head, seqlen_q, dim_qk, dim_v, **common)
     if attn_type == "gated_retention":
-        return bench_gated_retention(Batch, head, seqlen_q, dim_qk, dim_v, **common)
+        return bench_gated_retention(
+            Batch, head, seqlen_q, dim_qk, dim_v, limitations=limitations, **common
+        )
     if attn_type == "relu_attn":
         return bench_reluattention(Batch, head, seqlen_q, dim_qk, dim_v, **common)
     if attn_type == "retention_parallel":
         return bench_retention_parallel(Batch, head, seqlen_q, dim_qk, dim_v, **common)
     if attn_type == "retention_recurrent":
-        return bench_retnet_recurrent(Batch, head, seqlen_q, dim_qk, dim_v, **common)
+        return bench_retnet_recurrent(
+            Batch, head, seqlen_q, dim_qk, dim_v, limitations=limitations, **common
+        )
     if attn_type == "mamba2_ssm":
         return bench_mamba2_ssm(
             Batch,
@@ -118,6 +165,7 @@ def bench_attention(
             HK=head_k,
             HV=head_v,
             chunk_size=chunk_size,
+            limitations=limitations,
             **common,
         )
     if attn_type == "mla_attn":
@@ -581,6 +629,56 @@ def bench_reluattention(
     return result_dict
 
 
+def _stateful_capability_limit(error):
+    if isinstance(error, StatefulCompilationError):
+        if error.category in {"COMPILE_RESOURCE", "RUNTIME_RESOURCE"}:
+            return "RESOURCE_LIMIT", error.as_dict()
+        if (
+            error.category == "SPECIALIZATION"
+            and error.path == "role_sizes"
+            and "supported" in error.details
+        ):
+            return "UNSUPPORTED", error.as_dict()
+    if isinstance(error, GenericBaselineError) and error.failures:
+        resource_reasons = {
+            "runtime workload exceeds compiled resource envelope",
+            "tuning workload exceeds safe resource envelope",
+        }
+        if all(failure.reason in resource_reasons for failure in error.failures):
+            return "RESOURCE_LIMIT", [asdict(failure) for failure in error.failures]
+    raise error
+
+
+def _measure_stateful(
+    operator, profile, inputs, upstream, timer, require_grad, limitations
+):
+    """Measure each direction under its own compilation and resource contract."""
+    latencies = [None, None]
+    for index, direction in enumerate(("forward", "backward")):
+        if index and not require_grad:
+            continue
+        try:
+            module = _compile_factory_profile(
+                operator, **profile, autotune=True, backward=bool(index)
+            )
+            if index:
+                output = module(**inputs).outputs["output"]
+                latencies[index] = timer(
+                    lambda: output.backward(upstream, retain_graph=True)
+                )
+            else:
+                detached = {name: tensor.detach() for name, tensor in inputs.items()}
+                latencies[index] = timer(lambda: module(**detached).outputs["output"])
+        except (StatefulCompilationError, GenericBaselineError) as error:
+            status, reason = _stateful_capability_limit(error)
+            if limitations is not None:
+                limitations.append(
+                    {"direction": direction, "status": status, "reason": reason}
+                )
+            print(f"MetaAttention {direction} {status}: {reason}")
+    return tuple(latencies)
+
+
 def bench_gated_retention(
     B,
     H,
@@ -591,6 +689,7 @@ def bench_gated_retention(
     dtype=torch.bfloat16,
     require_grad=True,
     timer: Callable[..., float] | None = None,
+    limitations: list[dict] | None = None,
 ):
     timer = _resolve_timer(timer)
 
@@ -610,63 +709,17 @@ def bench_gated_retention(
     g.detach_().requires_grad_(require_grad)
     v.detach_().requires_grad_(require_grad)
 
-    q1 = q.clone()
-    k1 = k.clone()
-    v1 = v.clone()
-    g1 = g.clone().to(dtype)
-
-    q1.detach_().requires_grad_(require_grad)
-    k1.detach_().requires_grad_(require_grad)
-    g1.detach_().requires_grad_(require_grad)
-    v1.detach_().requires_grad_(require_grad)
-
     # ours
-    attention_module = gated_retention(B, H, S, D, DV, dtype=dtype, tune=True)
-    fwd_lat = timer(lambda: attention_module(q, k, v, g))
-    if require_grad:
-        o = attention_module(q, k, v, g)
-        bwd_lat = timer(lambda: o.backward(do, retain_graph=True))
-
-    result_dict["MetaAttention"] = (fwd_lat, bwd_lat)
-
-    # flash-linear-attention
-    try:
-        from fla.ops.simple_gla import chunk_simple_gla
-
-        fwd_lat_ref = timer(
-            lambda: chunk_simple_gla(q1, k1, v1, g1, head_first=True)[0]
-        )
-
-        if require_grad:
-            out_ref, _ = chunk_simple_gla(q1, k1, v1, g1, head_first=True)
-            bwd_lat_ref = timer(lambda: out_ref.backward(do, retain_graph=True))
-        else:
-            bwd_lat_ref = None
-        result_dict["FlashLinearAttention"] = (fwd_lat_ref, bwd_lat_ref)
-
-    except Exception as e:
-        print(f"Warning: fla.ops.simple_gla not available: {e}")
-
-    # torch inductor
-    try:
-        from fla.ops.simple_gla.naive import torch_simple_gla
-
-        q1.detach_().requires_grad_(require_grad)
-        k1.detach_().requires_grad_(require_grad)
-        v1.detach_().requires_grad_(require_grad)
-        g1.detach_().requires_grad_(require_grad)
-
-        torch_simple_gla = torch.compile(torch_simple_gla)
-        fwd_lat_ref2 = timer(lambda: torch_simple_gla(q1, k1, v1, g1, chunk_size=512))
-
-        if require_grad:
-            out_ref2 = torch_simple_gla(q1, k1, v1, g1, chunk_size=512)
-            bwd_lat_ref2 = timer(lambda: out_ref2.backward(do, retain_graph=True))
-        else:
-            bwd_lat_ref2 = None
-        result_dict["Torch Inductor"] = (fwd_lat_ref2, bwd_lat_ref2)
-    except Exception as e:
-        print(f"Warning: Torch Inductor benchmark failed: {e}")
+    attention_module = gated_retention(B, H, S, D, DV, dtype=dtype)
+    result_dict["MetaAttention"] = _measure_stateful(
+        attention_module,
+        dict(query_heads=H, state_heads=H, key_size=D, value_size=DV),
+        dict(query=q, key=k, value=v, gate=g),
+        do,
+        timer,
+        require_grad,
+        limitations,
+    )
 
     return result_dict
 
@@ -681,6 +734,7 @@ def bench_retnet_recurrent(
     dtype=torch.bfloat16,
     require_grad=True,
     timer: Callable[..., float] | None = None,
+    limitations: list[dict] | None = None,
 ):
     timer = _resolve_timer(timer)
 
@@ -700,67 +754,17 @@ def bench_retnet_recurrent(
     g.detach_().requires_grad_(False)
     v.detach_().requires_grad_(require_grad)
 
-    # clone for reference
-    q1 = q.clone()
-    k1 = k.clone()
-    v1 = v.clone()
-    g1 = g.clone()
-
-    q1.detach_().requires_grad_(require_grad)
-    k1.detach_().requires_grad_(require_grad)
-    g1.detach_().requires_grad_(False)
-    v1.detach_().requires_grad_(require_grad)
-
     # ours
-    attention_module = retnet_recurrent(B, H, S, D, DV, dtype=dtype, tune=True)
-    fwd_lat = timer(lambda: attention_module(q, k, v, g))
-    if require_grad:
-        o = attention_module(q, k, v, g)
-        bwd_lat = timer(lambda: o.backward(do, retain_graph=True))
-
-    result_dict["MetaAttention"] = (fwd_lat, bwd_lat)
-
-    # flash-linear-attention
-    try:
-        from fla.ops.retention import chunk_retention
-
-        fwd_lat_ref = timer(lambda: chunk_retention(q1, k1, v1, head_first=True)[0])
-        if require_grad:
-            o_ref, _ = chunk_retention(q1, k1, v1, head_first=True)
-            bwd_lat_ref = timer(lambda: o_ref.backward(do, retain_graph=True))
-        result_dict["FlashLinearAttention"] = (fwd_lat_ref, bwd_lat_ref)
-    except Exception as e:
-        print(f"Warning: fla.ops.retention not available: {e}")
-
-    # torch inductor
-    try:
-
-        @torch.compile
-        def ref(q, k, v):
-            orig_type = q.dtype
-            q, k, v = q.float(), k.float(), v.float()
-            _, n_heads, seq_len, d_head = q.shape
-            s = (
-                1
-                - q.new_tensor(2.0, dtype=torch.float).pow(
-                    -5.0 - q.new_tensor(range(n_heads), dtype=torch.float)
-                )
-            ).log2()
-            n = q.new_tensor(range(seq_len), dtype=torch.float)
-            n = torch.exp2((n.unsqueeze(-1) - n) * s.view(-1, 1, 1)) * n.unsqueeze(
-                -1
-            ).ge(n)
-            s = torch.einsum("bhqd,bhkd,hqk->bhqk", q * d_head**-0.5, k, n.to(q.dtype))
-            o = torch.einsum("bhqk,bhkd->bhqd", s, v)
-            return o.to(orig_type)
-
-        fwd_lat_ref2 = timer(lambda: ref(q1, k1, v1))
-        if require_grad:
-            o_ref2 = ref(q1, k1, v1)
-            bwd_lat_ref2 = timer(lambda: o_ref2.backward(do, retain_graph=True))
-        result_dict["Torch Inductor"] = (fwd_lat_ref2, bwd_lat_ref2)
-    except Exception as e:
-        print(f"Warning: Torch Inductor benchmark failed: {e}")
+    attention_module = retnet_recurrent(B, H, S, D, DV, dtype=dtype)
+    result_dict["MetaAttention"] = _measure_stateful(
+        attention_module,
+        dict(query_heads=H, state_heads=H, key_size=D, value_size=DV),
+        dict(query=q, key=k, value=v, gate=g),
+        do,
+        timer,
+        require_grad,
+        limitations,
+    )
 
     return result_dict
 
@@ -827,6 +831,7 @@ def bench_mamba2_ssm(
     require_grad=True,
     chunk_size: int | None = None,
     timer: Callable[..., float] | None = None,
+    limitations: list[dict] | None = None,
 ):
     timer = _resolve_timer(timer)
 
@@ -857,7 +862,7 @@ def bench_mamba2_ssm(
     q_ours = query.clone().transpose(1, 2).contiguous()
     k_ours = key.clone().transpose(1, 2).contiguous()
     v_ours = value.clone().transpose(1, 2).contiguous()
-    A_ours = A_mamba[None, :].clone().contiguous()
+    A_ours = A_mamba[None, :, None].expand(1, HV, D).contiguous()
     dt_ours = dt_mamba.clone().transpose(1, 2).contiguous()
     if require_grad:
         do_ours = do.clone().transpose(1, 2).contiguous()
@@ -868,52 +873,23 @@ def bench_mamba2_ssm(
     A_ours = A_ours.detach().requires_grad_(require_grad)
     dt_ours = dt_ours.detach().requires_grad_(require_grad)
 
-    attention_module = mamba2(B, HQ, S, D, DV, HK, HV, dtype=dtype, tune=True)
-    fwd_lat = timer(
-        lambda: attention_module(
-            q_ours, k_ours, v_ours, dt_ours, A_ours, dt_ours.to(dtype)
-        )
+    attention_module = mamba2(B, HQ, S, D, DV, HK, HV, dtype=dtype)
+    result_dict["MetaAttention"] = _measure_stateful(
+        attention_module,
+        dict(
+            query_heads=HQ,
+            key_heads=HK,
+            value_heads=HV,
+            state_heads=HV,
+            key_size=D,
+            value_size=DV,
+        ),
+        dict(query=q_ours, key=k_ours, value=v_ours, A=A_ours, dt=dt_ours),
+        do_ours if require_grad else None,
+        timer,
+        require_grad,
+        limitations,
     )
-    if require_grad:
-        o = attention_module(q_ours, k_ours, v_ours, dt_ours, A_ours, dt_ours.to(dtype))
-        bwd_lat = timer(lambda: o.backward(do_ours, retain_graph=True))
-    result_dict["MetaAttention"] = (fwd_lat, bwd_lat)
-
-    # mamba2 ssm
-    value = value.detach_().requires_grad_(require_grad)
-    A_mamba.detach_().requires_grad_(require_grad)
-    dt_mamba.detach_().requires_grad_(require_grad)
-    key.detach_().requires_grad_(require_grad)
-    query.detach_().requires_grad_(require_grad)
-
-    try:
-        from mamba_ssm.ops.triton.ssd_combined import mamba_chunk_scan_combined
-
-        fwd_lat_ref = timer(
-            lambda: mamba_chunk_scan_combined(
-                value,
-                dt_mamba,
-                A_mamba,
-                key,
-                query,
-                chunk_size=64,
-            )
-        )
-        if require_grad:
-            out_ref = mamba_chunk_scan_combined(
-                value,
-                dt_mamba,
-                A_mamba,
-                key,
-                query,
-                chunk_size=64,
-            )
-            bwd_lat_ref = timer(lambda: out_ref.backward(do, retain_graph=True))
-        else:
-            bwd_lat_ref = None
-        result_dict["Mamba2"] = (fwd_lat_ref, bwd_lat_ref)
-    except Exception as e:
-        print(f"Warning: mamba2 ssm not available: {e}")
 
     # torch inductor
     try:
@@ -1138,7 +1114,6 @@ def bench_mla_decode(
     result_dict = {}
 
     q = torch.randn(B, 1, HQ, D, dtype=dtype, device="cuda")
-    # To be compatible with flashMLA
     KV = torch.randn(B * SKV // 64, 64, HKV, DV, dtype=dtype, device="cuda")
     k_pe = torch.randn(B * SKV // 64, 64, HKV, D - DV, dtype=dtype, device="cuda")
     KV = torch.concat([KV, k_pe], dim=-1).contiguous()
@@ -1147,85 +1122,6 @@ def bench_mla_decode(
     attention_module = mla_decode(B, HQ, SKV, D, DV, HK=HKV, HV=HKV, dtype=dtype)
     fwd_lat = timer(lambda: attention_module(q, KV))
     result_dict["MetaAttention"] = (fwd_lat, None)
-
-    # FlashMLA
-    try:
-        import triton
-        from flash_mla import flash_mla_with_kvcache, get_mla_metadata
-
-        cache_seqlens = torch.full((B,), SKV, dtype=torch.int32, device="cuda")
-        max_seqlen = cache_seqlens.max().item()
-        max_seqlen_pad = triton.cdiv(max_seqlen, 256) * 256
-
-        tile_scheduler_metadata, num_splits = get_mla_metadata(
-            cache_seqlens, 1 * HQ // HKV, HKV
-        )
-        block_size = 64
-        block_table = torch.arange(
-            B * max_seqlen_pad // block_size, dtype=torch.int32, device="cuda"
-        ).view(B, max_seqlen_pad // block_size)
-
-        fwd_lat_ref = timer(
-            lambda: flash_mla_with_kvcache(
-                q,
-                KV,
-                block_table,
-                cache_seqlens,
-                DV,
-                tile_scheduler_metadata,
-                num_splits,
-                causal=True,
-            )
-        )
-
-        result_dict["FlashMLA"] = (fwd_lat_ref, None)
-
-    except Exception as e:
-        print(f"Warning: flashMLA not available: {e}")
-
-    # triton
-    try:
-        from ref.flash_mla_decode_triton import flash_mla_triton
-
-        q_nope, q_pe = q[..., :DV].contiguous(), q[..., DV:].contiguous()
-        blocked_k_nope, blocked_k_pe = (
-            KV[..., :DV].contiguous(),
-            KV[..., DV:].contiguous(),
-        )
-        cache_seqlens = torch.full((B,), SKV, dtype=torch.int32, device="cuda")
-        max_seqlen = cache_seqlens.max().item()
-        max_seqlen_pad = triton.cdiv(max_seqlen, 256) * 256
-
-        block_size = 64
-        block_table = torch.arange(
-            B * max_seqlen_pad // block_size, dtype=torch.int32, device="cuda"
-        ).view(B, max_seqlen_pad // block_size)
-
-        fwd_lat_ref = timer(
-            lambda: flash_mla_triton(
-                q_nope,
-                q_pe,
-                block_table,
-                blocked_k_nope,
-                blocked_k_pe,
-                max_seqlen_pad,
-                block_size,
-                B,
-                1,
-                cache_seqlens,
-                HQ,
-                HKV,
-                D,
-                DV,
-                True,
-                dtype,
-            )
-        )
-
-        result_dict["FlashMLA Triton"] = (fwd_lat_ref, None)
-
-    except Exception as e:
-        print(f"Warning: Triton MLA Decode not available: {e}")
 
     return result_dict
 

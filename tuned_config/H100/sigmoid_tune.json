@@ -48,7 +48,7 @@
         "dim": 128,
         "dimv": 128,
         "tuned_config": {
-            "block_M": 256,
+            "block_M": 128,
             "block_N": 64,
             "num_stages": 2,
             "thread_num": 256,
@@ -62,7 +62,7 @@
         "dim": 128,
         "dimv": 128,
         "tuned_config": {
-            "block_M": 256,
+            "block_M": 128,
             "block_N": 64,
             "num_stages": 1,
             "thread_num": 256,
@@ -76,7 +76,7 @@
         "dim": 128,
         "dimv": 128,
         "tuned_config": {
-            "block_M": 256,
+            "block_M": 128,
             "block_N": 64,
             "num_stages": 1,
             "thread_num": 256,

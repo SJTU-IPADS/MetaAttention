@@ -39,13 +39,13 @@ struct SharedStorageQKVOVt {
   struct {
     cute::array_aligned<Gemm1Type, cute::cosize_v<SmemLayoutQ>> smem_q;
     cute::array_aligned<Gemm1Type, cute::cosize_v<SmemLayoutK>> smem_k;
-    cute::array_aligned<Gemm2Type, cute::cosize_v<SmemLayoutV>> smem_v;  
+    cute::array_aligned<Gemm2Type, cute::cosize_v<SmemLayoutV>> smem_v;
     union {
         cute::array_aligned<Gemm2Type, cute::cosize_v<SmemLayoutV>> smem_v_out;
         cute::array_aligned<OutputType, cute::cosize_v<SmemLayoutO>> smem_o;
     };
   };
-  struct {    
+  struct {
     cutlass::arch::ClusterTransactionBarrier barrier_Q;
     cutlass::arch::ClusterBarrier barrier_O;
     typename cutlass::PipelineTmaAsync<kStages>::SharedStorage pipeline_k;
@@ -150,7 +150,7 @@ struct Flash_fwd_kernel_traits_fp8 {
     static_assert(cutlass::sizeof_bits_v<Element> == 8);
     using ElementAccum = float;
     using OutputType = cutlass::half_t;
-    using index_t = int64_t;      
+    using index_t = int64_t;
 
     // The number of threads.
     static constexpr int kNWarps = kNWarps_;
@@ -159,8 +159,8 @@ struct Flash_fwd_kernel_traits_fp8 {
 
     static constexpr bool Is_Q_in_regs = Is_Q_in_regs_;
     static_assert(kNWarps_ == 12 || kNWarps_ == 16);
-    static constexpr bool Is_WS = true;    
-    static_assert(!Is_Q_in_regs, "Warp-specialization does not support Q in registers");    
+    static constexpr bool Is_WS = true;
+    static_assert(!Is_Q_in_regs, "Warp-specialization does not support Q in registers");
 
     static constexpr int kBlockM = kBlockM_;
     static constexpr int kBlockN = kBlockN_;
@@ -177,11 +177,11 @@ struct Flash_fwd_kernel_traits_fp8 {
     static constexpr int kStages = kStages_;
     static_assert(kStages > 1);
 
-    using AtomLayoutMNK = Layout<Shape<Int<kBlockM / 64>, _1, _1>>;    
+    using AtomLayoutMNK = Layout<Shape<Int<kBlockM / 64>, _1, _1>>;
     using TiledMma0 = decltype(cute::make_tiled_mma(
         cute::GMMA::ss_op_selector<Element, Element, ElementAccum, TileShape_MNK>(),
         AtomLayoutMNK{}));
-    
+
     using TiledMma1 = decltype(cute::make_tiled_mma(
         cute::GMMA::rs_op_selector<Element, Element, ElementAccum, decltype(select<0, 2, 1>(TileShape_MNK_V{}))>(),
         AtomLayoutMNK{}));
@@ -196,12 +196,12 @@ struct Flash_fwd_kernel_traits_fp8 {
         decltype(tile_to_shape(SmemLayoutAtomK{},
                  make_shape(shape<1>(TileShape_MNK{}), shape<2>(TileShape_MNK{}), Int<kStages>{})));
 
-    using TransposeShapeAtomV = Shape<_64, _64>;    
+    using TransposeShapeAtomV = Shape<_64, _64>;
     using SmemLayoutAtomV = decltype(tile_to_shape(GMMA::Layout_K_SW64_Atom<Element>{}, TransposeShapeAtomV{}));
     using SmemLayoutV =
         decltype(tile_to_shape(SmemLayoutAtomV{},
                  make_shape(shape<1>(TileShape_MNK_V{}), shape<2>(TileShape_MNK_V{}), Int<kStages>{})));
-    
+
     // for fp8 in-kernel transpose -- src layout
     using SmemLayoutDivideV = decltype(tiled_divide(SmemLayoutV{}, TransposeShapeAtomV{}));
     using SmemShapeLDSM = Shape<Shape<_8, _8>, Shape<_16, _4>>;
@@ -638,7 +638,7 @@ struct Flash_bwd_kernel_traits {
     using SmemLayoutQ =
         decltype(tile_to_shape(SmemLayoutAtomQ{},
                  make_shape(shape<0>(TileShape_MNK{}), shape<2>(TileShape_MNK{}), Int<kStages>{})));
-    using SmemLayoutdO = 
+    using SmemLayoutdO =
         decltype(tile_to_shape(SmemLayoutAtomdO{},
                  make_shape(shape<0>(TileShape_MNK_V{}), shape<2>(TileShape_MNK_V{}), Int<kStages>{})));
 
@@ -799,7 +799,7 @@ struct Flash_bwd_seqqpar_kernel_traits {
         Shape<Int<kBlockM>, Int<kBlockN / (2 / AtomLayoutMSdP)>, Int<kQKHeadDim>>,
         Shape<Int<kBlockN / (2 / AtomLayoutMSdP)>, Int<kBlockM>, Int<kQKHeadDim>>
     >;
-    
+
     using TileShapeAtomdP = std::conditional_t<
         !SdP_swapAB,
         Shape<Int<kBlockM>, Int<kBlockN / (2 / AtomLayoutMSdP)>, Int<kVHeadDim>>,

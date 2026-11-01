@@ -30,7 +30,7 @@ void run_flash_fwd(Flash_fwd_params &params, cudaStream_t stream) {
     using CollectiveMainloop = flash::CollectiveMainloopFwd<Kernel_traits, Is_causal, Seqlen_traits>;
     using CollectiveEpilogue = flash::CollectiveEpilogueFwd<Kernel_traits, Seqlen_traits>;
     using Scheduler = std::conditional_t<
-        Seqlen_traits::kUseVarSeqLen, 
+        Seqlen_traits::kUseVarSeqLen,
         flash::SingleTileScheduler,
         std::conditional_t<!Is_causal,
             flash::StaticPersistentTileScheduler,
@@ -45,17 +45,17 @@ void run_flash_fwd(Flash_fwd_params &params, cudaStream_t stream) {
         CollectiveMainloop::to_underlying_arguments({
             static_cast<Element const*>(params.q_ptr),
             seqlen_traits_q.get_gmem_layout(
-                params.seqlen_q, params.d, params.h, params.b, 
+                params.seqlen_q, params.d, params.h, params.b,
                 params.q_row_stride, params.q_head_stride, params.q_batch_stride
             ),  // layout_Q
             static_cast<Element const*>(params.k_ptr),
             seqlen_traits_k.get_gmem_layout(
-                params.seqlen_k, params.d, params.h_k, params.b, 
+                params.seqlen_k, params.d, params.h_k, params.b,
                 params.k_row_stride, params.k_head_stride, params.k_batch_stride
             ),  // layout_K
             static_cast<Element const*>(params.v_ptr),
             seqlen_traits_k.get_gmem_layout(
-                params.seqlen_k, params.vd, params.h_k, params.b, 
+                params.seqlen_k, params.vd, params.h_k, params.b,
                 params.v_row_stride, params.v_head_stride, params.v_batch_stride
             ),  // layout_V
             params.scale_softmax_log2,
@@ -109,7 +109,7 @@ void run_flash_fwd(Flash_fwd_params &params, cudaStream_t stream) {
     dim3 cluster_dims(size<0>(ClusterShape{}), size<1>(ClusterShape{}), size<2>(ClusterShape{}));
     cutlass::ClusterLaunchParams launch_params{grid_dims, block_dims, cluster_dims, smem_size, stream};
     cutlass::launch_kernel_on_cluster(
-        launch_params, kernel, mainloop_params, epilogue_params, 
+        launch_params, kernel, mainloop_params, epilogue_params,
         scheduler_params, seqlen_traits_q, seqlen_traits_k);
     CHECK_CUDA_KERNEL_LAUNCH();
 }
@@ -120,7 +120,7 @@ void run_mha_fwd_qkdim64_vdim64(Flash_fwd_params &params, cudaStream_t stream) {
     BOOL_SWITCH(params.is_causal, Is_causal, [&] {
         SEQLEN_SWITCH(params.cu_seqlens_q, Seqlen_traits, [&] {
             run_flash_fwd<
-                Flash_fwd_kernel_traits<Headdim, Headdim, 192, 128, 16, 2, false, 1, T>, 
+                Flash_fwd_kernel_traits<Headdim, Headdim, 192, 128, 16, 2, false, 1, T>,
                 Is_causal, Seqlen_traits
             >(params, stream);
         });
@@ -135,7 +135,7 @@ void run_mha_fwd_qkdim128_vdim128(Flash_fwd_params &params, cudaStream_t stream)
             // Only use Cluster if number of tiles along seqlen_q is even and not Is_causal
             BOOL_SWITCH(cutlass::ceil_div(params.seqlen_q, 128) % 2 == 0 && !Is_causal && !Seqlen_traits::kUseVarSeqLen, UseCluster, [&] {
                 run_flash_fwd<
-                    Flash_fwd_kernel_traits<Headdim, Headdim, 128, Is_causal ? 128 : 176, 12, 2, false, UseCluster ? 2 : 1, T>, 
+                    Flash_fwd_kernel_traits<Headdim, Headdim, 128, Is_causal ? 128 : 176, 12, 2, false, UseCluster ? 2 : 1, T>,
                     Is_causal, Seqlen_traits
                 >(params, stream);
             });
@@ -151,7 +151,7 @@ void run_mha_fwd_hdim256(Flash_fwd_params &params, cudaStream_t stream) {
             // Only use Cluster if number of tiles along seqlen_q is even
             BOOL_SWITCH(cutlass::ceil_div(params.seqlen_q, 128) % 2 == 0 && !Is_causal && !Seqlen_traits::kUseVarSeqLen, UseCluster, [&] {
                 run_flash_fwd<
-                    Flash_fwd_kernel_traits<Headdim, Headdim, 128, 80, 12, 2, false, UseCluster ? 2 : 1, T>, 
+                    Flash_fwd_kernel_traits<Headdim, Headdim, 128, 80, 12, 2, false, UseCluster ? 2 : 1, T>,
                     Is_causal, Seqlen_traits
                 >(params, stream);
             });
@@ -165,7 +165,7 @@ void run_mha_fwd_hdim64_fp8(Flash_fwd_params &params, cudaStream_t stream) {
     constexpr static int kBlockM = 192;
     constexpr static int kBlockN = 128;
     constexpr static int kNWarps = 4 + kBlockM/16;
-    constexpr static int kStages = 4;    
+    constexpr static int kStages = 4;
     using Seqlen_traits = flash::FixedSeqLenTraits;
     if(params.is_causal) {
         run_flash_fwd<Flash_fwd_kernel_traits_fp8<Headdim, Headdim,  kBlockM, kBlockN, kNWarps, kStages,
@@ -182,7 +182,7 @@ void run_mha_fwd_hdim64_fp8(Flash_fwd_params &params, cudaStream_t stream) {
             // BOOL_SWITCH(cutlass::ceil_div(params.seqlen_q, kBlockM) % 2 == 0 && !Is_causal &&
             //             !Seqlen_traits::kUseVarSeqLen, UseCluster, [&] {
             //     run_flash_fwd<Flash_fwd_kernel_traits_fp8<Headdim, kBlockM, kBlockN, kNWarps, kStages,
-            //                   false, UseCluster ? 2 : 1, T>, Is_causal, Seqlen_traits>(params, stream);            
+            //                   false, UseCluster ? 2 : 1, T>, Is_causal, Seqlen_traits>(params, stream);
             // });
         // });
     // });
@@ -219,7 +219,7 @@ void run_mha_fwd_hdim128_fp8(Flash_fwd_params &params, cudaStream_t stream) {
 
 template<typename T>
 void run_mha_fwd_hdim256_fp8(Flash_fwd_params &params, cudaStream_t stream) {
-    constexpr static int Headdim = 256; 
+    constexpr static int Headdim = 256;
     constexpr static int kBlockM = 128;
     constexpr static int kBlockN = 128;
     constexpr static int kNWarps = 4 + kBlockM/16;
@@ -254,7 +254,7 @@ void run_mha_fwd_qkdim32_vdim64(Flash_fwd_params &params, cudaStream_t stream) {
     BOOL_SWITCH(params.is_causal, Is_causal, [&] {
         SEQLEN_SWITCH(params.cu_seqlens_q, Seqlen_traits, [&] {
             run_flash_fwd<
-                Flash_fwd_kernel_traits<QKHeaddim, VHeaddim, 192, 128, 16, 2, false, 1, T>, 
+                Flash_fwd_kernel_traits<QKHeaddim, VHeaddim, 192, 128, 16, 2, false, 1, T>,
                 Is_causal, Seqlen_traits
             >(params, stream);
         });
@@ -270,7 +270,7 @@ void run_mha_fwd_qkdim96_vdim192(Flash_fwd_params &params, cudaStream_t stream) 
             // Only use Cluster if number of tiles along seqlen_q is even
             BOOL_SWITCH(cutlass::ceil_div(params.seqlen_q, 128) % 2 == 0 && !Is_causal && !Seqlen_traits::kUseVarSeqLen, UseCluster, [&] {
                 run_flash_fwd<
-                    Flash_fwd_kernel_traits<QKHeaddim, VHeaddim, 128, 144, 12, 2, false, UseCluster ? 2 : 1, T>, 
+                    Flash_fwd_kernel_traits<QKHeaddim, VHeaddim, 128, 144, 12, 2, false, UseCluster ? 2 : 1, T>,
                     Is_causal, Seqlen_traits
                 >(params, stream);
             });
@@ -288,7 +288,7 @@ void run_mha_fwd_qkdim128_vdim256(Flash_fwd_params &params, cudaStream_t stream)
             BOOL_SWITCH(cutlass::ceil_div(params.seqlen_q, 128) % 2 == 0 && !Is_causal && !Seqlen_traits::kUseVarSeqLen, UseCluster, [&] {
                 run_flash_fwd<
                 // 128,128 199 tflops -> 128,96 302 tflops  -> 128,112 239tflops -> 128,80 299 tflops
-                    Flash_fwd_kernel_traits<QKHeaddim, VHeaddim, 128, 96, 12, 2, false, UseCluster ? 2 : 1, T>, 
+                    Flash_fwd_kernel_traits<QKHeaddim, VHeaddim, 128, 96, 12, 2, false, UseCluster ? 2 : 1, T>,
                     Is_causal, Seqlen_traits
                 >(params, stream);
             });
@@ -305,7 +305,7 @@ void run_mha_fwd_qkdim192_vdim128(Flash_fwd_params &params, cudaStream_t stream)
             // Only use Cluster if number of tiles along seqlen_q is even
             BOOL_SWITCH(cutlass::ceil_div(params.seqlen_q, 128) % 2 == 0 && !Is_causal && !Seqlen_traits::kUseVarSeqLen, UseCluster, [&] {
                 run_flash_fwd<
-                    Flash_fwd_kernel_traits<QKHeaddim, VHeaddim, 128, 96, 12, 2, false, UseCluster ? 2 : 1, T>, 
+                    Flash_fwd_kernel_traits<QKHeaddim, VHeaddim, 128, 96, 12, 2, false, UseCluster ? 2 : 1, T>,
                     Is_causal, Seqlen_traits
                 >(params, stream);
             });

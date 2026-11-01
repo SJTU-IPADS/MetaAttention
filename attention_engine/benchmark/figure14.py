@@ -14,6 +14,7 @@ from examples.mha_decode import softmax_attention_decode
 from examples.mla_decode import mla_decode
 from examples.reluattn import relu_attention
 from examples.retnet_recurrent import retnet_recurrent
+from attn_engine.stateful_operator import _compile_factory_profile
 
 from .cases import mi250_cases
 from .results import dump_bench_result
@@ -312,32 +313,26 @@ def bench_retnet_recurrent(
     q.requires_grad_(require_grad)
     k.requires_grad_(require_grad)
     v.requires_grad_(require_grad)
-    q1, k1, v1 = q.clone(), k.clone(), v.clone()
-    q1.requires_grad_(require_grad)
-    k1.requires_grad_(require_grad)
-    v1.requires_grad_(require_grad)
 
-    attention_module = retnet_recurrent(B, H, S, D, DV, dtype=dtype, tune=True)
-    fwd_lat = timer(lambda: attention_module(q, k, v, g))
+    attention_module = retnet_recurrent(B, H, S, D, DV, dtype=dtype)
+    attention_module = _compile_factory_profile(
+        attention_module,
+        query_heads=H,
+        state_heads=H,
+        key_size=D,
+        value_size=DV,
+        autotune=True,
+        backward=require_grad,
+    )
+    fwd_lat = timer(
+        lambda: attention_module(query=q, key=k, value=v, gate=g).outputs["output"]
+    )
     if require_grad:
-        output = attention_module(q, k, v, g)
+        output = attention_module(query=q, key=k, value=v, gate=g).outputs["output"]
         bwd_lat = timer(lambda: output.backward(do, retain_graph=True))
     else:
         bwd_lat = None
     result_dict = {"MetaAttention": (fwd_lat, bwd_lat)}
-
-    try:
-        from fla.ops.retention import chunk_retention
-
-        ref_fwd_lat = timer(lambda: chunk_retention(q1, k1, v1, head_first=True)[0])
-        if require_grad:
-            output, _ = chunk_retention(q1, k1, v1, head_first=True)
-            ref_bwd_lat = timer(lambda: output.backward(do, retain_graph=True))
-        else:
-            ref_bwd_lat = None
-        result_dict["FlashLinearAttention"] = (ref_fwd_lat, ref_bwd_lat)
-    except Exception as exc:
-        print(f"Warning: fla.ops.retention not available: {exc}")
 
     return result_dict
 
@@ -390,16 +385,27 @@ def bench_mamba2_ssm(
     )
     do_ours = do.transpose(1, 2).contiguous() if do is not None else None
 
-    attention_module = mamba2(B, HQ, S, D, DV, HK, HV, dtype=dtype, tune=True)
+    attention_module = mamba2(B, HQ, S, D, DV, HK, HV, dtype=dtype)
+    attention_module = _compile_factory_profile(
+        attention_module,
+        query_heads=HQ,
+        key_heads=HK,
+        value_heads=HV,
+        state_heads=HV,
+        key_size=D,
+        value_size=DV,
+        autotune=True,
+        backward=require_grad,
+    )
     fwd_lat = timer(
         lambda: attention_module(
-            q_ours, k_ours, v_ours, dt_ours, A_ours, dt_ours.to(dtype)
-        )
+            query=q_ours, key=k_ours, value=v_ours, A=A_ours, dt=dt_ours
+        ).outputs["output"]
     )
     if require_grad:
         output = attention_module(
-            q_ours, k_ours, v_ours, dt_ours, A_ours, dt_ours.to(dtype)
-        )
+            query=q_ours, key=k_ours, value=v_ours, A=A_ours, dt=dt_ours
+        ).outputs["output"]
         bwd_lat = timer(lambda: output.backward(do_ours, retain_graph=True))
     else:
         bwd_lat = None
@@ -410,24 +416,6 @@ def bench_mamba2_ssm(
     value.requires_grad_(require_grad)
     A_mamba.requires_grad_(require_grad)
     dt_mamba.requires_grad_(require_grad)
-    try:
-        from mamba_ssm.ops.triton.ssd_combined import mamba_chunk_scan_combined
-
-        ref_fwd_lat = timer(
-            lambda: mamba_chunk_scan_combined(
-                value, dt_mamba, A_mamba, key, query, chunk_size=chunk_size
-            )
-        )
-        if require_grad:
-            output = mamba_chunk_scan_combined(
-                value, dt_mamba, A_mamba, key, query, chunk_size=chunk_size
-            )
-            ref_bwd_lat = timer(lambda: output.backward(do, retain_graph=True))
-        else:
-            ref_bwd_lat = None
-        result_dict["Mamba2"] = (ref_fwd_lat, ref_bwd_lat)
-    except Exception as exc:
-        print(f"Warning: mamba2 ssm not available: {exc}")
 
     return result_dict
 

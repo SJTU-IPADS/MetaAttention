@@ -4,6 +4,7 @@ from examples.retnet_recurrent import retnet_recurrent
 from examples.mamba2 import mamba2
 from examples.mla_decode import mla_decode
 from examples.mha_decode import softmax_attention_decode
+from attn_engine.stateful_operator import _compile_factory_profile
 
 
 from plot_fig_mi250 import plot_figure14
@@ -15,7 +16,6 @@ from tilelang.profiler import do_bench
 import torch
 import torch.nn.functional as F
 import math
-import triton
 import pandas as pd
 import os
 
@@ -341,37 +341,25 @@ def bench_retnet_recurrent(
     g.detach_().requires_grad_(False)
     v.detach_().requires_grad_(require_grad)
 
-    # clone for reference
-    q1 = q.clone()
-    k1 = k.clone()
-    v1 = v.clone()
-    g1 = g.clone()
-
-    q1.detach_().requires_grad_(require_grad)
-    k1.detach_().requires_grad_(require_grad)
-    g1.detach_().requires_grad_(False)
-    v1.detach_().requires_grad_(require_grad)
-
     # ours
-    attention_module = retnet_recurrent(B, H, S, D, DV, dtype=dtype, tune=True)
-    fwd_lat = do_bench(lambda: attention_module(q, k, v, g))
+    attention_module = retnet_recurrent(B, H, S, D, DV, dtype=dtype)
+    attention_module = _compile_factory_profile(
+        attention_module,
+        query_heads=H,
+        state_heads=H,
+        key_size=D,
+        value_size=DV,
+        autotune=True,
+        backward=require_grad,
+    )
+    fwd_lat = do_bench(
+        lambda: attention_module(query=q, key=k, value=v, gate=g).outputs["output"]
+    )
     if require_grad:
-        o = attention_module(q, k, v, g)
+        o = attention_module(query=q, key=k, value=v, gate=g).outputs["output"]
         bwd_lat = do_bench(lambda: o.backward(do, retain_graph=True))
 
     result_dict["MetaAttention"] = (fwd_lat, bwd_lat)
-
-    # flash-linear-attention
-    try:
-        from fla.ops.retention import chunk_retention
-
-        fwd_lat_ref = do_bench(lambda: chunk_retention(q1, k1, v1, head_first=True)[0])
-        if require_grad:
-            o_ref, _ = chunk_retention(q1, k1, v1, head_first=True)
-            bwd_lat_ref = do_bench(lambda: o_ref.backward(do, retain_graph=True))
-        result_dict["FlashLinearAttention"] = (fwd_lat_ref, bwd_lat_ref)
-    except Exception:
-        print("Warning: fla.ops.retention not available")
 
     return result_dict
 
@@ -418,14 +406,27 @@ def bench_mamba2_ssm(
     A_ours = A_ours.detach().requires_grad_(require_grad)
     dt_ours = dt_ours.detach().requires_grad_(require_grad)
 
-    attention_module = mamba2(B, HQ, S, D, DV, HK, HV, dtype=dtype, tune=True)
+    attention_module = mamba2(B, HQ, S, D, DV, HK, HV, dtype=dtype)
+    attention_module = _compile_factory_profile(
+        attention_module,
+        query_heads=HQ,
+        key_heads=HK,
+        value_heads=HV,
+        state_heads=HV,
+        key_size=D,
+        value_size=DV,
+        autotune=True,
+        backward=require_grad,
+    )
     fwd_lat = do_bench(
         lambda: attention_module(
-            q_ours, k_ours, v_ours, dt_ours, A_ours, dt_ours.to(dtype)
-        )
+            query=q_ours, key=k_ours, value=v_ours, A=A_ours, dt=dt_ours
+        ).outputs["output"]
     )
     if require_grad:
-        o = attention_module(q_ours, k_ours, v_ours, dt_ours, A_ours, dt_ours.to(dtype))
+        o = attention_module(
+            query=q_ours, key=k_ours, value=v_ours, A=A_ours, dt=dt_ours
+        ).outputs["output"]
         bwd_lat = do_bench(lambda: o.backward(do_ours, retain_graph=True))
     result_dict["MetaAttention"] = (fwd_lat, bwd_lat)
 
@@ -435,33 +436,6 @@ def bench_mamba2_ssm(
     dt_mamba.detach_().requires_grad_(require_grad)
     key.detach_().requires_grad_(require_grad)
     query.detach_().requires_grad_(require_grad)
-
-    try:
-        from mamba_ssm.ops.triton.ssd_combined import mamba_chunk_scan_combined
-
-        fwd_lat_ref = do_bench(
-            lambda: mamba_chunk_scan_combined(
-                value,
-                dt_mamba,
-                A_mamba,
-                key,
-                query,
-                chunk_size=32,
-            )
-        )
-        if require_grad:
-            out_ref = mamba_chunk_scan_combined(
-                value,
-                dt_mamba,
-                A_mamba,
-                key,
-                query,
-                chunk_size=32,
-            )
-            bwd_lat_ref = do_bench(lambda: out_ref.backward(do, retain_graph=True))
-        result_dict["Mamba2"] = (fwd_lat_ref, bwd_lat_ref)
-    except Exception as e:
-        print(f"Warning: mamba2 ssm not available: {e}")
 
     return result_dict
 
@@ -478,48 +452,6 @@ def bench_mla_decode(B, HQ, SKV, D, DV, HKV=1, dtype=torch.float16):
     attention_module = mla_decode(B, HQ, SKV, D, DV, HK=HKV, HV=HKV, dtype=dtype)
     fwd_lat = do_bench(lambda: attention_module(q, q_pe, KV, k_pe))
     result_dict["MetaAttention"] = (fwd_lat, None)
-
-    # flashMLA
-    try:
-        from ref.flash_mla_decode_triton import flash_mla_triton
-
-        cache_seqlens = torch.full((B,), SKV, dtype=torch.int32, device="cuda")
-        max_seqlen = cache_seqlens.max().item()
-        max_seqlen_pad = triton.cdiv(max_seqlen, 256) * 256
-
-        block_size = 64
-        block_table = torch.arange(
-            B * max_seqlen_pad // block_size, dtype=torch.int32, device="cuda"
-        ).view(B, max_seqlen_pad // block_size)
-
-        # [B, S, H, D] -> [B*S//64, 64, H, D]
-        KV = KV.view(B * SKV // block_size, block_size, HKV, DV)
-        k_pe = k_pe.view(B * SKV // block_size, block_size, HKV, D - DV)
-        fwd_lat_ref = do_bench(
-            lambda: flash_mla_triton(
-                q,
-                q_pe,
-                block_table,
-                KV,
-                k_pe,
-                max_seqlen_pad,
-                block_size,
-                B,
-                1,
-                cache_seqlens,
-                HQ,
-                HKV,
-                D,
-                DV,
-                True,
-                dtype,
-            )
-        )
-
-        result_dict["MLA Triton"] = (fwd_lat_ref, None)
-
-    except Exception as e:
-        print(f"Warning: MLA Triton not available: {e}")
 
     return result_dict
 

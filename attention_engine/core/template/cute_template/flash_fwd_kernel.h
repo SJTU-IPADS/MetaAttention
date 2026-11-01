@@ -254,7 +254,7 @@ __global__ void __launch_bounds__(Ktraits::kNWarps * cutlass::NumThreadsPerWarp,
     pipeline_params_vt.producer_arv_count = NumCopyThreads;
     pipeline_params_vt.consumer_arv_count = NumMmaThreads;
     MainloopPipelineVt pipeline_vt(shared_storage.pipeline_vt, pipeline_params_vt);
-    
+
     PipelineParams pipeline_params;
     pipeline_params.transaction_bytes = CollectiveMainloop::TmaTransactionBytesK;
     int warp_group_idx = cutlass::canonical_warp_group_idx();
@@ -295,8 +295,8 @@ __global__ void __launch_bounds__(Ktraits::kNWarps * cutlass::NumThreadsPerWarp,
     static_assert(Ktraits::kNWarps == 12 || Ktraits::kNWarps == 16);
     if (warp_group_idx == 0) {  // Producer
         cutlass::arch::warpgroup_reg_dealloc<Ktraits::kNWarps == 12 ? 40 : 32>();
-        
-        PipelineState smem_pipe_write = cutlass::make_producer_start_state<MainloopPipeline>(); 
+
+        PipelineState smem_pipe_write = cutlass::make_producer_start_state<MainloopPipeline>();
         PipelineState smem_pipe_read, smem_pipe_release;
 
         int work_idx = 0;
@@ -338,7 +338,7 @@ __global__ void __launch_bounds__(Ktraits::kNWarps * cutlass::NumThreadsPerWarp,
         }
         collective_mainloop.load_tail_one_write(pipeline_k, pipeline_v, smem_pipe_write);
     } else {  // Consumer
-        cutlass::arch::warpgroup_reg_alloc<Ktraits::kNWarps == 12 ? 232 : 160>();        
+        cutlass::arch::warpgroup_reg_alloc<Ktraits::kNWarps == 12 ? 232 : 160>();
 
         TileScheduler scheduler(&shared_storage.tile_count_semaphore);
         // Initialize matmul objects.
@@ -376,12 +376,12 @@ __global__ void __launch_bounds__(Ktraits::kNWarps * cutlass::NumThreadsPerWarp,
                     continue;
                 }
             }
-            
+
             collective_mainloop.mma_fp8<Delay_V_release>(
                 mainloop_params, pipeline_k, pipeline_vt, smem_pipe_read, smem_pipe_release,
                 tOrO, softmax, n_block_max,
                 threadIdx.x - NumCopyThreads, work_idx, m_block,
-                shared_storage, seqlen_traits_q, seqlen_traits_k); 
+                shared_storage, seqlen_traits_q, seqlen_traits_k);
 
         #ifndef NO_FP8_COLUMN_PERMUTE
             collective_epilogue.store_fp8(epilogue_params, tOrO, softmax.row_sum, shared_storage, tiled_mma1,

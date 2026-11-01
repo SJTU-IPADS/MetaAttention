@@ -163,7 +163,7 @@ def kernel(batch, heads, seq_len, seq_len_kv, dim, dimv,
             po_shared = T.alloc_shared([block_M2, dimv], dtype)
             o_accum_local = T.alloc_fragment([block_M2, dimv], accum_dtype)
             o_shared = T.alloc_shared([block_M2, dimv], dtype)
-            
+
             # lse_local = T.alloc_fragment([num_split, block_M], dtype)
             # row_sum_local = T.alloc_fragment([num_split, block_M], dtype)
             # lse_logsum_local = T.alloc_fragment([block_M], accum_dtype)
@@ -234,7 +234,7 @@ program = kernel(
 mod = tl.compile(
     program,
     out_idx={{output_idx_list}},
-    execution_backend="dlpack",
+    execution_backend="auto",
 )
 # TL_INFERFACE = """
 class _attention(torch.autograd.Function):

@@ -112,7 +112,7 @@ void set_params_fprop(Flash_fwd_params &params,
     params.vd = vd;
     params.vd_rounded = vd_rounded;
 
-    // Set the different scale values.    
+    // Set the different scale values.
     params.scale_softmax = softmax_scale;
     params.scale_softmax_log2 = softmax_scale * M_LOG2E;
     __half scale_softmax_log2_half = __float2half(params.scale_softmax_log2);
@@ -276,7 +276,7 @@ void run_mha_fwd(Flash_fwd_params &params, cudaStream_t stream, bool force_split
     //         run_mha_fwd_<cutlass::float_e4m3_t, 128, 128>(params, stream);
     //     } else if (params.d == 256 && params.vd == 256) {
     //         run_mha_fwd_<cutlass::float_e4m3_t, 256, 256>(params, stream);
-    //     }     
+    //     }
     // }
 }
 
@@ -363,7 +363,7 @@ mha_fwd(at::Tensor &q,         // batch_size x seqlen_q x num_heads x head_size
         CHECK_DEVICE(out);
         TORCH_CHECK(out.stride(-1) == 1, "Output tensor must have contiguous last dimension");
         CHECK_SHAPE(out, batch_size, seqlen_q, num_heads, v_head_size_og);
-        if (v_head_size_og % 8 != 0) { 
+        if (v_head_size_og % 8 != 0) {
             out = torch::empty({batch_size, seqlen_q, num_heads, v_head_size_og}, q.options());
             out = torch::nn::functional::pad(out, torch::nn::functional::PadFuncOptions({0, 8 - v_head_size_og % 8}));
         }
@@ -376,7 +376,7 @@ mha_fwd(at::Tensor &q,         // batch_size x seqlen_q x num_heads x head_size
                 out = torch::nn::functional::pad(out, torch::nn::functional::PadFuncOptions({0, 8 - v_head_size_og % 8}));
             }
         }
-            
+
     }
 
     auto round_multiple = [](int x, int m) { return (x + m - 1) / m * m; };
@@ -467,7 +467,7 @@ mha_fwd(at::Tensor &q,         // batch_size x seqlen_q x num_heads x head_size
 }
 
 // whether has_member
-// TODO: tmp solution 
+// TODO: tmp solution
 template < typename T, typename = void >
 struct has_member_x : std::false_type {};
 
@@ -476,7 +476,7 @@ struct has_member_x<T, std::void_t<decltype(std::declval<T>().softmax_lse_ptr)>>
 
 void run_mha_bwd(Flash_bwd_params &params, cudaStream_t stream) {
 
-    if ( has_member_x<Flash_bwd_params>::value && 
+    if ( has_member_x<Flash_bwd_params>::value &&
         params.d=={{dimqk}} && params.vd=={{dimv}}) {
         run_mha_bwd_<{{cutlass_dtype}}, {{dimqk}}, {{dimv}}>(params, stream);
     }
@@ -488,7 +488,7 @@ void run_mha_bwd(Flash_bwd_params &params, cudaStream_t stream) {
 //   if (params.is_bf16) {
 //     if (params.d <= 64 && params.vd <= 64) {
 //       run_mha_bwd_<cutlass::bfloat16_t, 64, 64>(params, stream);
-//     } 
+//     }
 //     else if (params.d <= 128 && params.vd <= 256) {
 //       run_mha_bwd_<cutlass::bfloat16_t, 128, 256>(params, stream);
 //     }
@@ -496,7 +496,7 @@ void run_mha_bwd(Flash_bwd_params &params, cudaStream_t stream) {
 //   else {
 //     if (params.d <= 64 && params.vd <= 64) {
 //       run_mha_bwd_<cutlass::half_t, 64, 64>(params, stream);
-//     } 
+//     }
 //     else if (params.d <= 128 && params.vd <= 256) {
 //       run_mha_bwd_<cutlass::half_t, 128, 256>(params, stream);
 //     }

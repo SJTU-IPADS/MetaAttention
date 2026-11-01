@@ -130,8 +130,8 @@ __forceinline__ __device__ void scale_apply_exp2(Tensor<Engine0, Layout0> &tenso
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 
 template <int kNRows, bool Use_max_offset_ = false>
-struct OnlineFunc { 
-    constexpr static bool Use_max_offset = Use_max_offset_; 
+struct OnlineFunc {
+    constexpr static bool Use_max_offset = Use_max_offset_;
     // constexpr static float max_offset = Use_max_offset ? 8.0f : 0.0f;
     // constexpr static float max_offset_E = max_offset * float(M_LN2);
 
@@ -165,12 +165,12 @@ struct OnlineFunc {
         return scores_scale;
     };
 
-    
+
     template<bool Check_inf=false, typename Tensor1>
     __forceinline__ __device__ void finalize_epilogue(Tensor1& acc_o) {
         Tensor acc_o_rowcol = make_tensor(acc_o.data(), flash::convert_layout_acc_rowcol(acc_o.layout()));
         static_assert(decltype(size<0>(acc_o_rowcol))::value == kNRows);
-        
+
         {{finalize_epilogue_body_vardefine}}
 
         {{finalize_epilogue_body}}

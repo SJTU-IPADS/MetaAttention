@@ -217,3 +217,109 @@ def test_synthetic_benchmark_artifacts_have_metaattention_rows(tmp_path):
     result_dir = tmp_path / "artifacts"
     _write_synthetic_csvs(result_dir, H100_FILES)
     _assert_metaattention_rows(tuple(sorted(result_dir.glob("*.csv"))))
+
+
+@pytest.mark.parametrize("failure_kind", ["resource", "unsupported", "compiler-bug"])
+def test_stateful_measurement_preserves_forward_and_classifies_backward(
+    monkeypatch, failure_kind
+):
+    from types import SimpleNamespace
+
+    import torch
+    from attn_engine.stateful_operator import StatefulCompilationError
+    from attn_engine.stateful.compile.tuning import GenericBaselineError, TuningFailure
+
+    reasons = {
+        "resource": GenericBaselineError(
+            (
+                TuningFailure(
+                    "candidate",
+                    "probe",
+                    "RuntimeError",
+                    "runtime workload exceeds compiled resource envelope",
+                ),
+            )
+        ),
+        "unsupported": StatefulCompilationError(
+            "SPECIALIZATION", "role_sizes", {"supported": [64, 128]}
+        ),
+        "compiler-bug": GenericBaselineError(
+            (
+                TuningFailure(
+                    "candidate",
+                    "probe",
+                    "InternalError",
+                    "Layout infer conflict",
+                ),
+            )
+        ),
+    }
+    calls = []
+    value = torch.ones(1, requires_grad=True)
+
+    def compile_profile(operator, **kwargs):
+        calls.append(kwargs["backward"])
+        if kwargs["backward"]:
+            raise reasons[failure_kind]
+
+        def forward(**inputs):
+            assert not inputs["value"].requires_grad
+            return SimpleNamespace(outputs={"output": inputs["value"]})
+
+        return forward
+
+    def timer(callback):
+        callback()
+        return 1.25
+
+    monkeypatch.setattr(figure11, "_compile_factory_profile", compile_profile)
+    limitations = []
+    if failure_kind == "compiler-bug":
+        with pytest.raises(GenericBaselineError, match="Layout infer conflict"):
+            figure11._measure_stateful(
+                object(), {}, {"value": value}, value, timer, True, limitations
+            )
+        assert limitations == []
+    else:
+        assert figure11._measure_stateful(
+            object(), {}, {"value": value}, value, timer, True, limitations
+        ) == (1.25, None)
+        assert limitations[0]["direction"] == "backward"
+        assert limitations[0]["status"] == (
+            "RESOURCE_LIMIT" if failure_kind == "resource" else "UNSUPPORTED"
+        )
+        assert limitations[0]["reason"]
+    assert calls == [False, True]
+
+
+def test_figure11_sidecar_preserves_limits_and_missing_metrics(tmp_path, monkeypatch):
+    import json
+
+    cases = h100_cases()[:2]
+    monkeypatch.setattr(figure11, "h100_cases", lambda: cases)
+
+    def benchmark(*args, limitations, **kwargs):
+        limitations.append(
+            {
+                "direction": "backward",
+                "status": "RESOURCE_LIMIT",
+                "reason": {"workspace_bytes": 1 << 30},
+            }
+        )
+        return {"MetaAttention": (1.25, None)}
+
+    monkeypatch.setattr(figure11, "bench_attention", benchmark)
+    figure11.bench_fig11(tmp_path)
+    records = json.loads((tmp_path / "measurements.json").read_text())
+    assert len(records) == 4
+    assert {record["case_id"] for record in records} == {case.case_id for case in cases}
+    for record in records:
+        if record["direction"] == "forward":
+            assert record["status"] == "MEASURED_UNVALIDATED"
+            assert record["latency_ms"] == 1.25
+        else:
+            assert record["status"] == "RESOURCE_LIMIT"
+            assert record["latency_ms"] is None
+            assert record["reason"] == {"workspace_bytes": 1 << 30}
+    rows = list(csv.reader((tmp_path / "deepseek_bwd.csv").open()))
+    assert rows[1] == ["MetaAttention", "", ""]

@@ -76,4 +76,4 @@
       using NAME = flash::FixedSeqLenTraits;                                   \
       return __VA_ARGS__();                                                    \
     }                                                                          \
-  }() 
+  }()

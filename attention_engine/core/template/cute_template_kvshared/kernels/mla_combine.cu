@@ -29,7 +29,7 @@ flash_fwd_mla_combine_kernel(__grid_constant__ const Flash_fwd_mla_params params
     if (my_num_splits == 1) {
         return;
     }
-    
+
     const int num_q_seqs = params.q_seq_per_hk * params.h_k;
     const int num_cur_valid_q_seqs = min(BLOCK_SIZE_M, num_q_seqs - m_block_idx*BLOCK_SIZE_M);
     Tensor gLseAccum = make_tensor(
@@ -42,17 +42,17 @@ flash_fwd_mla_combine_kernel(__grid_constant__ const Flash_fwd_mla_params params
         Shape<Int<BLOCK_SIZE_M>>{},
         Stride<_1>{}
     );
-    
+
     extern __shared__ float smem_buf[];
     Tensor sLseScale = make_tensor(
         make_smem_ptr(smem_buf),
         Shape<Int<BLOCK_SIZE_M>, Int<MAX_SPLITS>>{},
         Stride<Int<MAX_SPLITS+1>, _1>{} // +1 to avoid bank conflict
     );
-    
+
     // Wait for the previous kernel (the MLA kernel) to finish
     cudaGridDependencySynchronize();
-    
+
     // Read gLseAccum into sLseScale
     {
         #pragma unroll 4
@@ -135,7 +135,7 @@ flash_fwd_mla_combine_kernel(__grid_constant__ const Flash_fwd_mla_params params
         }
 
         cudaTriggerProgrammaticLaunchCompletion();
-        
+
         const int q_seq_idx = m_block_idx*BLOCK_SIZE_M + warp_idx;
         const int k_head_idx = q_seq_idx / params.q_seq_per_hk;
         auto o_ptr = reinterpret_cast<ElementT *>(params.o_ptr) + batch_idx*params.o_batch_stride + k_head_idx*params.o_head_stride + (q_seq_idx%params.q_seq_per_hk)*params.o_row_stride;

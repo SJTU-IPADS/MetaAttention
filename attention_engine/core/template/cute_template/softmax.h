@@ -130,8 +130,8 @@ __forceinline__ __device__ void scale_apply_exp2(Tensor<Engine0, Layout0> &tenso
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 
 template <int kNRows, bool Use_max_offset_ = false>
-struct Softmax { 
-    constexpr static bool Use_max_offset = Use_max_offset_; 
+struct Softmax {
+    constexpr static bool Use_max_offset = Use_max_offset_;
     // constexpr static float max_offset = Use_max_offset ? 8.0f : 0.0f;
     // constexpr static float max_offset_E = max_offset * float(M_LN2);
 

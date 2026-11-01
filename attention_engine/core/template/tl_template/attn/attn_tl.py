@@ -50,7 +50,7 @@ def get_configs():
         thread_num = [128, 256]
     shared_fuse = [{{shared_fuse}},]# [True, False]
     _configs = list(itertools.product(block_M, block_N, num_stages, thread_num, shared_fuse))
-    
+
     configs = [{
         'block_M': c[0],
         'block_N': c[1],
@@ -59,7 +59,7 @@ def get_configs():
         'shared_fuse': c[4]
     } for c in _configs]
     return configs
-        
+
 # TL_KERNEL = """
 def kernel(batch, heads, seq_len, dim, dimv, tune=False):
     # scale = (1.0 / dim) ** 0.5 * 1.44269504  # log2(e) # 0.69314718  loge(2)
@@ -69,10 +69,10 @@ def kernel(batch, heads, seq_len, dim, dimv, tune=False):
     seq_len_kv = seq_len
     dtype = "{{tl_dtype}}" # "float16"
     accum_dtype = "float"
-    
+
     # TODO: fix has_valid_block
     is_casual = {{is_casual}} # True
-    
+
     def kernel_func(
         block_M, block_N, num_stages, thread_num,
         shared_fuse):
@@ -81,11 +81,11 @@ def kernel(batch, heads, seq_len, dim, dimv, tune=False):
         # TL_MAIN = """
         @T.macro
         {{score_mod_func_def | indent(8)}}
-        
+
         @T.macro
         {{online_func_def | indent(8)}}
 
-            
+
         @T.prim_func
         def main(
             Q: T.Tensor(shape, dtype), # type: ignore
@@ -146,14 +146,14 @@ def kernel(batch, heads, seq_len, dim, dimv, tune=False):
                             )
                     else:
                         T.clear(scores)
-                    
+
                     T.gemm(Q_shared, K_shared, scores, transpose_B=True, policy= (T.GemmWarpPolicy.FullRow if (not shared_fuse) else T.GemmWarpPolicy.FullCol))
                     T.copy(V[bz, k * block_N : (k + 1) * block_N, by, :], V_shared)
-                        
+
                     {{custom_fwd_inputs_load_s2r | indent(20)}}
                     # call score_mod
                     {{call_score_mod | indent(20)}}
-                        
+
                     # call online_func
                     if shared_fuse:
                         T.copy(scores, scores_shared)
@@ -167,7 +167,7 @@ def kernel(batch, heads, seq_len, dim, dimv, tune=False):
 
                     for i, j in T.Parallel(block_M, dimv):
                         acc_o[i, j] *= {{o_scale_varname}}[i]
-                    
+
                     # update online_rowscales
                     {{online_rowscales_update | indent(20)}}
 
@@ -175,7 +175,7 @@ def kernel(batch, heads, seq_len, dim, dimv, tune=False):
                         T.gemm(acc_s_cast_1, V_shared, acc_o, policy=(T.GemmWarpPolicy.FullCol))
                     else:
                         T.gemm(acc_s_cast, V_shared, acc_o, policy=T.GemmWarpPolicy.FullRow)
-                
+
                 # online_fwd_epilogue
                 {{online_func_epilogue | indent(16)}}
 
@@ -183,9 +183,9 @@ def kernel(batch, heads, seq_len, dim, dimv, tune=False):
 
                 # save final_rowscale
                 {{final_rowscales_save | indent(16)}}
-            
+
         return main
-    
+
     if tune:
         @tilelang.autotune(
             configs=get_configs(),
@@ -201,7 +201,7 @@ def kernel(batch, heads, seq_len, dim, dimv, tune=False):
     else:
         def kernel(block_M, block_N, num_stages, thread_num, shared_fuse):
             return kernel_func(block_M, block_N, num_stages, thread_num, shared_fuse)
-        
+
         return kernel
 
 
@@ -266,7 +266,7 @@ def flashattn_bwd_preprocess2(batch, heads, seq_len, dim, dimv):
     return flash_bwd_prep
 
 def get_bwd_configs():
-    if attn_device.platform == "CUDA": 
+    if attn_device.platform == "CUDA":
         block_M = [64, 128]
         block_N = [64, 128] if isinstance(attn_device, H100) else [32, 64, 128]
         num_stages = [2,]
@@ -277,17 +277,17 @@ def get_bwd_configs():
         num_stages = [0,]
         thread_num = [128, 256]
     _configs = list(itertools.product(block_M, block_N, num_stages, thread_num))
-    
+
     MMA_ATOM_M = attn_device.mma_primitive[0]# 64
     MMA_ATOM_N = attn_device.mma_primitive[1]# 16
     MMA_ATOM_TRHEADS = attn_device.threads_per_mma # 128
     smem_cap = attn_device.smem_cap # 232448
     reg_cap = attn_device.reg_cap * 4 # 65536 * 4
     reg_cap_per_thread = attn_device.register_per_thread * 4 # 255 * 4
-    
+
     configs = []
     for block_M, block_N, num_stages, thread_num in _configs:
-        
+
         conditions = [
             ((block_M * block_N) // (MMA_ATOM_M * MMA_ATOM_N)) % (thread_num // MMA_ATOM_TRHEADS) == 0,
         ]
@@ -313,8 +313,8 @@ def flashattn_bwd(batch, heads, seq_len, dim, dimv, tune=False):
     dtype = "{{tl_dtype}}" # "float16"
     accum_dtype = "float"
     is_casual = {{is_casual}}
-    
-    def kernel_func( 
+
+    def kernel_func(
         block_M, block_N, num_stages, thread_num = 128*2
         ):
 
@@ -326,7 +326,7 @@ def flashattn_bwd(batch, heads, seq_len, dim, dimv, tune=False):
             ):
             {{score_mod_fwd_body | indent(12)}}
             pass
-        
+
         @T.macro
         def score_mod_backward(
             # scores: T.Tensor([block_M, block_N], accum_dtype),
@@ -380,7 +380,7 @@ def flashattn_bwd(batch, heads, seq_len, dim, dimv, tune=False):
                 {{score_mod_bwd_inputs_declare | indent(16)}}
                 # score_mod_declare_shared
                 {{score_mod_bwd_inputs_declare_shared | indent(16)}}
-                
+
                 do = T.alloc_shared([block_N, dimv], dtype)
                 dv = T.alloc_fragment([block_M, dimv], accum_dtype)
                 dk = T.alloc_fragment([block_M, dim], accum_dtype)
@@ -413,7 +413,7 @@ def flashattn_bwd(batch, heads, seq_len, dim, dimv, tune=False):
                     {{custom_fwd_inputs_load_shared_bwd | indent(20)}}
                     T.clear(qkT)
                     T.gemm(K_shared, q, qkT, transpose_B=True, policy=T.GemmWarpPolicy.FullRow)
-                    
+
                     # score_mod
                     score_mod({{score_mod_inputs_bwd_list}}) # qkT,
 
@@ -422,7 +422,7 @@ def flashattn_bwd(batch, heads, seq_len, dim, dimv, tune=False):
 
                     # online_func_fwd
                     {{ online_func_fwd | indent(20) }}
-                    
+
                     # TODO: is causal
                     if is_casual or {{is_mask_mod_code}}:
                         for i, j in T.Parallel(block_M, block_N):
@@ -434,11 +434,11 @@ def flashattn_bwd(batch, heads, seq_len, dim, dimv, tune=False):
                             {{score_mod_output_var}}[i, j] = T.if_then_else(
                                 {{mask_output}}, {{score_mod_output_var}}[i, j], 0
                             )
-                    
+
                     T.copy(dO[bz, k * block_N : (k + 1) * block_N, bx, :], do)
                     T.clear(dsT)
                     T.gemm(V_shared, do, dsT, transpose_B=True, policy=T.GemmWarpPolicy.FullRow)
-                    
+
                     T.copy({{score_mod_output_var}}, qkT_cast)
                     T.gemm(qkT_cast, do, dv, policy=T.GemmWarpPolicy.FullRow)
 
@@ -461,11 +461,11 @@ def flashattn_bwd(batch, heads, seq_len, dim, dimv, tune=False):
 
                     # custom_bwd
                     {{custom_bwd_body | indent(20)}}
-                    
+
                     # score_mod_backward
-                    score_mod_backward({{score_mod_bwd_inputs_list}}) #  qkT, 
-                    
-                                    
+                    score_mod_backward({{score_mod_bwd_inputs_list}}) #  qkT,
+
+
                     T.copy(dsT, dsT_cast)
                     T.gemm(dsT_cast, q, dk, policy=T.GemmWarpPolicy.FullRow)
 
@@ -479,8 +479,8 @@ def flashattn_bwd(batch, heads, seq_len, dim, dimv, tune=False):
                 T.copy(dv, dV[bz, by * block_M : (by + 1) * block_M, bx, :])
                 T.copy(dk, dK[bz, by * block_M : (by + 1) * block_M, bx, :])
 
-        return flash_bwd     
-    
+        return flash_bwd
+
     if tune:
         @tilelang.autotune(
             configs=get_bwd_configs(),
@@ -496,7 +496,7 @@ def flashattn_bwd(batch, heads, seq_len, dim, dimv, tune=False):
     else:
         def kernel(block_M, block_N, num_stages, thread_num):
             return kernel_func(block_M, block_N, num_stages, thread_num)
-        
+
         return kernel
 
 # TL_KERNEL_BWD_POSTPROCESS = """
@@ -537,11 +537,11 @@ def get_problem_keys():
         "dim": {{DIM}},
         "dimv": {{DIMV}},
     }
-    
+
 def tune(tune_file, kernel_profiler, problem_keys)->Tuple:
     tuned_config = None
     pk = problem_keys
-    
+
     folder_path = os.path.dirname(tune_file)
     if folder_path and not os.path.exists(folder_path):
         os.makedirs(folder_path, exist_ok=True)
@@ -569,7 +569,7 @@ def tune(tune_file, kernel_profiler, problem_keys)->Tuple:
             })
             json.dump(configs, f, indent=4)
     return tuned_config
-    
+
 # forward
 tuned_config = None
 if TUNE:
@@ -589,7 +589,7 @@ else:
         'num_stages': {{stages}},
         'thread_num': {{thread_num}},
         'shared_fuse': {{shared_fuse}}
-    }    
+    }
 
 program = kernel(
     {{BATCH}}, {{HEADS}}, {{SEQ_LEN}}, {{DIM}}, {{DIMV}})
@@ -662,7 +662,7 @@ class _attention(torch.autograd.Function):
             o, *final_scale = mod(q, k, v, *custom_fwd_inputs)
         ctx.save_for_backward(q, k, v, o, *custom_fwd_inputs, *final_scale)
         return o
-    
+
     @staticmethod
     def backward(ctx, do):
         q, k, v, o, *tmp = ctx.saved_tensors
@@ -672,7 +672,7 @@ class _attention(torch.autograd.Function):
         # final_rowscales = tmp[-{{final_rowscales_length}}:]
         maybe_contiguous = lambda x: x.contiguous() if x.stride(-1) != 1 else x
         do, q, k, v, o = [maybe_contiguous(x) for x in (do, q, k, v, o)]
-        
+
         global mod_prep, mod_post, mod_bwd
         if {{isused_doosum}}:
             delta = mod_prep(o, do)
@@ -689,5 +689,3 @@ class _attention(torch.autograd.Function):
         return dq, dk, dv, *none_list
 
 attention = _attention.apply
-
-

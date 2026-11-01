@@ -44,7 +44,7 @@ def kernel(batch, heads, groups, seqlen_kv, dim, dimv, tune=False):
     def kernel_func(block_N, block_H, num_split, num_stages, threads):
         part_shape = [batch, heads, num_split, dimv]
         valid_block_H = min(block_H, kv_group_num)
-        
+
          # TL_MAIN = """
          # TODO
         # @T.macro
@@ -54,7 +54,7 @@ def kernel(batch, heads, groups, seqlen_kv, dim, dimv, tune=False):
         #     ):
         #     {#{score_mod_body | indent(12)}#}
         #     pass
-        
+
         # @T.macro
         # def online_func(
         #     # scores: T.Tensor([block_M, block_N], accum_dtype),
@@ -69,7 +69,7 @@ def kernel(batch, heads, groups, seqlen_kv, dim, dimv, tune=False):
                 K: T.Tensor(shape_k, dtype),
                 V: T.Tensor(shape_v, dtype),
                 {{custom_fwd_inputs | indent(8)}}
-                
+
                 mask: T.Tensor([batch, groups, 1, seqlen_kv], "uint8"),
                 Output: T.Tensor([batch, heads, dimv], dtype),
                 # {#{final_rowscales_output | indent(8)}#}

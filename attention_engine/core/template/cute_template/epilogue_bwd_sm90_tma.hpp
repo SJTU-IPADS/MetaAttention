@@ -160,11 +160,11 @@ struct CollectiveEpilogueBwd {
         auto smem_tiled_copy_dV = make_tiled_copy_C(SmemCopyAtomdKV{}, tiled_mmadV);
         auto smem_thr_copy_dK = smem_tiled_copy_dK.get_thread_slice(thread_idx);
         auto smem_thr_copy_dV = smem_tiled_copy_dV.get_thread_slice(thread_idx);
-        // if (blockIdx.x == 0 && threadIdx.x == 128) { 
+        // if (blockIdx.x == 0 && threadIdx.x == 128) {
         //     printf("tdVrdV#########################: \n");
         //     print_tensor(tdVrdV); }
         Tensor tdVrdV_out = flash::convert_type<Element>(tdVrdV);
-        // if (blockIdx.x == 0 && threadIdx.x == 128) { 
+        // if (blockIdx.x == 0 && threadIdx.x == 128) {
         //     printf("tdVrdV_out#########################: \n");
         //     print_tensor(tdVrdV_out); }
         Tensor tdKrdK_out = flash::convert_type<Element>(tdKrdK);

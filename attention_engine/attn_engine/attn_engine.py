@@ -488,8 +488,7 @@ class AttentionEngine:
                 )
             else:
                 raise TypeError(
-                    "CUTE MLA expects (q, k_cache) or "
-                    "(q, q_pe, key_value, key_pe)"
+                    "CUTE MLA expects (q, k_cache) or (q, q_pe, key_value, key_pe)"
                 )
             result = self.attention(q, k_cache)
             return result[0] if isinstance(result, tuple) else result

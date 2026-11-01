@@ -12,13 +12,12 @@ dependencies = [
   "numpy<2",
   "sympy",
   "termcolor",
-  "tilelang",
+  "tilelang==0.1.15",
   "torch",
 ]
 
 [project.optional-dependencies]
 bench = [
-  "flash-linear-attention==0.2.0",
   "pandas",
   "transformers==4.45.0",
 ]
@@ -36,13 +35,20 @@ explicit = true
 
 [tool.uv.sources]
 torch = [{ index = "pytorch-cu128" }]
-tilelang = { git = "https://github.com/tile-ai/tilelang.git", rev = "61f968b6c5c00c8986b9331d599f95dfee7a60cd" }
+
+# TileLang v0.1.15 is the latest released API used by the Stateful migration audit.
+# Keep the source on PyPI so the lock records the release rather than an old git snapshot.
+# The explicit PyTorch index remains independently controlled above.
+
 
 [dependency-groups]
 dev = [
   "prek>=0.4.5",
   "pytest>=9.1.1",
   "ruff>=0.15.19",
+]
+fla-benchmark = [
+  "flash-linear-attention==0.5.2",
 ]
 
 [build-system]
@@ -51,6 +57,7 @@ build-backend = "setuptools.build_meta"
 
 [tool.ruff]
 exclude = [
+  "3rd_parties",
   "attention_engine/core/template/cute_template",
   "attention_engine/core/template/cute_template_v2",
   "attention_engine/core/template/cute_template_kvshared",
@@ -95,6 +102,7 @@ markers = [
   "benchmark: long-running benchmark runner",
   "slow: long-running test",
   "h100: requires an H100-compatible CUDA runner",
+  "h20: requires an NVIDIA H20 CUDA runner",
   "mi250: requires an MI250-compatible HIP runner",
   "plot: PDF plotting contract tests",
   "io: CSV and artifact I/O contract tests",

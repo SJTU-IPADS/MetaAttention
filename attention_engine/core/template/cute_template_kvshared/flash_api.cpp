@@ -171,7 +171,7 @@ mha_fwd_kvcache_mla(
     params.block_table = block_table.data_ptr<int>();
     params.block_table_batch_stride = block_table.stride(0);
     params.page_block_size = page_block_size;
-    
+
     params.tile_scheduler_metadata_ptr = tile_scheduler_metadata.data_ptr<int>();
     params.num_sm_parts = tile_scheduler_metadata.size(0);
     params.num_splits_ptr = num_splits.data_ptr<int>();

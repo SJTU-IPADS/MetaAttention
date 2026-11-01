@@ -13,7 +13,7 @@ using namespace cute;
 template<typename InputT_>
 struct Traits {
     using InputT = InputT_;
-    
+
     static constexpr int BLOCK_SIZE_M = Config::BLOCK_SIZE_M;
     static constexpr int PAGE_BLOCK_SIZE = Config::PAGE_BLOCK_SIZE;
     static constexpr int HEAD_DIM_K = Config::HEAD_DIM_K;
@@ -53,7 +53,7 @@ struct Traits {
         Shape<Int<PAGE_BLOCK_SIZE>, Int<HEAD_DIM_K>>{}
     ));
 
-    // SmemLayoutK o (512, 64): (_,1) 
+    // SmemLayoutK o (512, 64): (_,1)
     using SmemLayoutV = decltype(composition(
         SmemLayoutK{},
         make_layout(Shape<Int<HEAD_DIM_V>, Int<PAGE_BLOCK_SIZE>>{}, GenRowMajor{})

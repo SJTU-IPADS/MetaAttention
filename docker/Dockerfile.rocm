@@ -12,17 +12,6 @@ COPY . ${REPO_DIR}
 WORKDIR ${REPO_DIR}
 RUN uv pip install --system --no-deps -e .
 
-RUN pip install flash-attn==2.7.4.post1 --no-build-isolation
 
-RUN git clone https://github.com/fla-org/flash-linear-attention.git \
-    && cd flash-linear-attention \
-    && git checkout v0.2.0 \
-    && mv fla/__init__.py fla/__init__.py.bak \
-    && mv fla/ops/__init__.py fla/ops/__init__.py.bak
-
-RUN git clone https://github.com/state-spaces/mamba.git \
-    && cd mamba \
-    && git checkout v2.2.6.post3 \
-    && mv mamba_ssm/__init__.py mamba_ssm/__init__.py.bak
 
 CMD ["bash"]

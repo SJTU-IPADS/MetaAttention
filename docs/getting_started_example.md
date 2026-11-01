@@ -50,7 +50,7 @@ class OnlineSoftmax(OnlineFunc):
             "lse": SymbolScalar("lse", Var("0.0")),
         }
         super().__init__(online_rowscales, final_rowscales)
-    
+
 
     @staticmethod
     def online_fwd(scores, online_rowscales, b, h, q_idx):
@@ -64,7 +64,7 @@ class OnlineSoftmax(OnlineFunc):
         m_new = m.max(scores.get_reduce("max"))
         scale_tmp = (m - m_new).exp()
         r = r * scale_tmp
-        
+
         scores = (scores - m_new).exp()
         r = r + scores.get_reduce("sum")
 
@@ -99,7 +99,7 @@ class OnlineSoftmax(OnlineFunc):
         lse = final_rowscales["lse"]
         scores_new = (scores-lse).exp()
         return scores_new
-    
+
     @staticmethod
     def backward(dp, scores, final_rowscales, doosum, b, h, q_idx, kv_idx):
         """
@@ -145,6 +145,5 @@ if __name__ == "__main__":
     out.backward(torch.ones_like(out))
 
 
-    
-```
 
+```

@@ -145,7 +145,7 @@ struct CollectiveMainloopBwd {
     using SmemLayoutQ =
         decltype(tile_to_shape(SmemLayoutAtomQ{},
                  make_shape(shape<0>(TileShape_MNK{}), shape<2>(TileShape_MNK{}), Int<kStages>{})));
-    using SmemLayoutdO = 
+    using SmemLayoutdO =
         decltype(tile_to_shape(SmemLayoutAtomdO{},
                     make_shape(shape<0>(TileShape_MNK_V{}), shape<2>(TileShape_MNK_V{}), Int<kStagesdO>{})));
     using SmemLayoutAtomK = decltype(cutlass::gemm::collective::detail::ss_smem_selector<GMMA::Major::K, Element,
@@ -171,7 +171,7 @@ struct CollectiveMainloopBwd {
     // Need stride to be multiple of 32, otherwise we get error (misaligned address) when doing TMA if e.g. kBlockM=80
     using SmemLayoutLSE = cute::Layout<cute::Shape<Int<kBlockM>, Int<kStages>>, cute::Stride<_1, Int<cute::round_up(kBlockM, 32)>>>;
     using SmemLayoutPsum = cute::Layout<cute::Shape<Int<kBlockM>, Int<kStagesdO>>, cute::Stride<_1, Int<cute::round_up(kBlockM, 32)>>>;
-    
+
     using SmemLayoutLSEMma = cute::Layout<cute::Shape<Int<kBlockN>, Int<kBlockM>, Int<kStages>>, cute::Stride<_0, _1, Int<cute::round_up(kBlockM, 32)>>>;
     using SmemLayoutPsumMma = cute::Layout<cute::Shape<Int<kBlockN>, Int<kBlockM>, Int<kStagesdO>>, cute::Stride<_0, _1, Int<cute::round_up(kBlockM, 32)>>>;
 
@@ -304,9 +304,9 @@ struct CollectiveMainloopBwd {
         cute::array_aligned<ElementAccum, cute::cosize_v<SmemLayoutdQaccum>, 1024> smem_dqacc;
         cute::array_aligned<Element, cute::cosize_v<SmemLayoutQ>> smem_q;
         cute::array_aligned<Element, cute::cosize_v<SmemLayoutdO>> smem_do;
-        // append possible spt here 
-        cute::array_aligned<Element, 
-            cute::cosize_v<SmemLayoutdS> + 
+        // append possible spt here
+        cute::array_aligned<Element,
+            cute::cosize_v<SmemLayoutdS> +
             ((!shared_fuse) ? cute::_0::value : cute::cosize_v<SmemLayoutPt_physical> )
         > smem_ds;
         cute::array_aligned<ElementAccum, cute::cosize_v<SmemLayoutLSE>, 128> smem_lse;
@@ -949,4 +949,3 @@ struct CollectiveMainloopBwd {
 };
 
 } // namespace flash
-

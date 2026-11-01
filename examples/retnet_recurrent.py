@@ -1,51 +1,60 @@
-from attn_engine import LinearAttentionEngine
-from core import CustomIO
-from core import meta_tensor
-from autotuner.arch import get_attn_device
-
 import torch
 
-"""
-Example of retention
+from attn_engine import (
+    Batch,
+    FeatureRole,
+    HeadRole,
+    Sequence,
+    AlgorithmIR,
+    AxisScale,
+    HeadMapping,
+    Input,
+    ProductFactor,
+    ProductInjection,
+    StateContraction,
+    StateSpec,
+    StateTransition,
+    StatefulOperator,
+    TensorInput,
+)
 
-fwd:
-input:
-Q: [B, H, T, D]
-K: [B, H, T, D]
-V: [B, H, T, DV]
-decay: [B, H, T]
-...custom_inputs
-
-output:
-O: [B, H, T, DV]
-"""
+KEY = FeatureRole("key_dim")
+VALUE = FeatureRole("value_dim")
+QUERY_HEADS = HeadRole("query_heads")
+KEY_HEADS = HeadRole("key_heads")
+VALUE_HEADS = HeadRole("value_heads")
+STATE_HEADS = HeadRole("state_heads")
 
 
-def retnet_recurrent(B, H, S, D, DV, dtype=torch.bfloat16, tune=False):
-
-    def decay_mod(decay, custom_io):  # (B,H,seqlen)
-        return decay.log()
-
-    scale = 1 / D**0.5
-
-    def q_mod(q, custom_io):
-        return q * scale
-
-    qkv_meta = (
-        meta_tensor(B, H, S, D, dtype=dtype),
-        meta_tensor(B, H, S, D, dtype=dtype),
-        meta_tensor(B, H, S, DV, dtype=dtype),
+def retnet_recurrent(B, H, S, D, DV, dtype=torch.bfloat16):
+    """RetNet recurrent acceptance profile expressed only with generic IR nodes."""
+    algorithm = AlgorithmIR(
+        inputs=(
+            TensorInput("query", (Batch, QUERY_HEADS, Sequence, KEY), dtype),
+            TensorInput("key", (Batch, KEY_HEADS, Sequence, KEY), dtype),
+            TensorInput("value", (Batch, VALUE_HEADS, Sequence, VALUE), dtype),
+            TensorInput("gate", (Batch, STATE_HEADS, Sequence), torch.float32),
+        ),
+        states=(StateSpec("memory", (Batch, STATE_HEADS, KEY, VALUE)),),
+        transition=StateTransition(
+            "memory",
+            propagations=(AxisScale(Input("gate")),),
+            injections=(
+                ProductInjection(
+                    (
+                        ProductFactor(Input("key"), (KEY,)),
+                        ProductFactor(Input("value"), (VALUE,)),
+                    )
+                ),
+            ),
+        ),
+        readouts=(
+            StateContraction(
+                "output", "memory", Input("query") * (D**-0.5), KEY, dtype
+            ),
+        ),
+        head_mapping=HeadMapping(
+            {QUERY_HEADS: STATE_HEADS, KEY_HEADS: STATE_HEADS, VALUE_HEADS: STATE_HEADS}
+        ),
     )
-    custom_io = CustomIO({})
-    attn_device = get_attn_device()
-    mod = LinearAttentionEngine(
-        qkv_meta,
-        q_mod=q_mod,
-        decay_mod=decay_mod,
-        custom_io=custom_io,
-        tune=tune,
-        tune_filename=f"tuned_config/{attn_device.name}/retention_linear",
-        tune_bwd=tune,
-    )
-
-    return mod
+    return StatefulOperator(algorithm)
