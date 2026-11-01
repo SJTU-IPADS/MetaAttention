@@ -17,7 +17,7 @@ A compiler-internal algorithm structure derived after mandatory safe simplificat
 ## Lowered candidate
 A compilable backend implementation of one Mathematical Plan. Lowered Candidates are benchmarked against one another; only the selected candidate proceeds to kernel-parameter autotuning.
 ## Compiled operator
-The result of compilation is a callable Forward Operator. When backward generation is requested, the operator is wrapped with compiler-generated autograd integration; users invoke the forward result and PyTorch invokes the generated backward kernel. The compiled result does not expose a separate public backward handle.
+The result of compilation is a callable Forward Operator. When backward generation is requested, the operator is wrapped with compiler-generated autograd integration; users invoke the forward result and PyTorch invokes the generated backward kernel. The compiled result does not expose a separate public backward handle. The selected executable binds its execution adapter at compilation, including native/chunked dispatch and legal reference fallbacks; the public operator validates each invocation without interpreting lowering families or recipes. Replacing a candidate during tuning rebuilds this binding.
 
 ## Tuning workload
 A compiler-chosen representative set of sequence workloads used when the caller does not know future sequence lengths. Its measurements select performance strategy but do not change Algorithm IR semantics.

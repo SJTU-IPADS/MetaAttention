@@ -96,6 +96,52 @@ def test_metadata_only_dense_compile_reuses_plan_across_dynamic_workloads():
     assert len(operator._plans) == 1
 
 
+@pytest.mark.parametrize("mode", ["dense", "packed"])
+@pytest.mark.parametrize("backward", [False, True])
+def test_compiled_invocation_delegates_only_after_public_validation(
+    monkeypatch, mode, backward
+):
+    from attn_engine.stateful.compile.plan import TileLangExecutable
+
+    compiled = _compile(
+        StatefulOperator(_accumulator_ir()), mode=mode, backward=backward
+    )
+    executable = compiled.operator._plans[compiled.specialization]
+    execute = TileLangExecutable.execute
+    calls = []
+
+    def record(self, **kwargs):
+        calls.append((self, kwargs["runtime"]))
+        return execute(self, **kwargs)
+
+    monkeypatch.setattr(TileLangExecutable, "execute", record)
+    dense = _inputs(length=5, requires_grad=backward)
+    expected_output, expected_state = _reference(dense)
+    inputs = dense
+    kwargs = {}
+    if mode == "packed":
+        inputs = {
+            name: value.transpose(1, 2).reshape(5, 1, *value.shape[3:]).contiguous()
+            for name, value in dense.items()
+        }
+        kwargs["sequence_offsets"] = torch.tensor([0, 0, 5], dtype=torch.int32)
+        expected_output = expected_output.transpose(1, 2).reshape(5, 1, 3)
+        expected_state = torch.cat((torch.zeros_like(expected_state), expected_state))
+    result = compiled(**inputs, **kwargs, return_final_state=True)
+    torch.testing.assert_close(result.outputs[0], expected_output)
+    torch.testing.assert_close(result.final_state[0], expected_state)
+    assert len(calls) == 1
+    assert calls[0][0] is executable
+    assert calls[0][1].packed == (mode == "packed")
+    if backward:
+        result.outputs[0].sum().backward()
+        assert all(value.grad is not None for value in dense.values())
+    with pytest.raises(StatefulCompilationError) as error:
+        compiled(**{name: value for name, value in inputs.items() if name != "query"})
+    assert error.value.category == "RUNTIME_BINDING"
+    assert len(calls) == 1
+
+
 def test_backward_compilation_publishes_compiler_owned_backward_candidate():
     operator = StatefulOperator(_accumulator_ir())
     compiled = _compile(operator, backward=True)

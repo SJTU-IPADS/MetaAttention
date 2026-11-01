@@ -176,6 +176,75 @@ def _assert_result(result, expected, expected_final):
     )
 
 
+def test_candidate_replacement_rebinds_execution_instead_of_retaining_scalar_adapter(
+    monkeypatch, gpu_device
+):
+    from dataclasses import replace
+
+    from attn_engine.stateful.compile.plan import TileLangExecutable
+    from attn_engine.stateful.runtime.workspace import WorkspacePolicy
+
+    compiled = _compile(
+        heads=1,
+        key_heads=1,
+        value_heads=1,
+        rows=64,
+        columns=64,
+        dtype=torch.float32,
+        gate_kind="log",
+    )
+    inputs, initial = _inputs(1, 1, 1, 1, 65, 64, 64, torch.float32, "log", gpu_device)
+    expected, expected_final = _reference(inputs, initial, "log")
+    owner = compiled.operator
+    executable = owner._plans[compiled.specialization]
+    assert executable.runtime_family == "scalar-factorized"
+    raw = TileLangExecutable.scalar_factorized_dense_raw
+    calls = []
+
+    def record(self, *args, **kwargs):
+        calls.append(self.plan.candidate.identity)
+        return raw(self, *args, **kwargs)
+
+    monkeypatch.setattr(TileLangExecutable, "scalar_factorized_dense_raw", record)
+    kwargs = {
+        "initial_state": StateTuple(("memory",), (initial,)),
+        "return_final_state": True,
+    }
+    _assert_result(compiled(**inputs, **kwargs), expected, expected_final)
+    assert calls == [executable.plan.candidate.identity]
+    generic = next(
+        item
+        for item in executable.plan.lowered_candidates
+        if item.lowerer == "tilelang-generic"
+    )
+    estimate = dict(executable.plan.candidate_estimates)[generic.identity]
+    replacement = replace(
+        executable,
+        plan=replace(
+            executable.plan,
+            candidate=generic,
+            mathematical_plan=next(
+                item
+                for item in executable.plan.mathematical_plans
+                if item.identity == generic.plan_identity
+            ),
+            workspace=WorkspacePolicy.for_candidate(
+                generic,
+                estimate,
+                compilation=compiled.compilation,
+                algorithm=owner._program,
+                rank_one_factored=None,
+            ),
+        ),
+    )
+    owner._plans[compiled.specialization] = replacement
+    _assert_result(compiled(**inputs, **kwargs), expected, expected_final)
+    assert calls == [executable.plan.candidate.identity]
+    owner._plans[compiled.specialization] = executable
+    _assert_result(compiled(**inputs, **kwargs), expected, expected_final)
+    assert calls == [executable.plan.candidate.identity] * 2
+
+
 @pytest.mark.parametrize("batch", [1, 2])
 @pytest.mark.parametrize("gate_kind", [None, "log"])
 @pytest.mark.parametrize("dtype", [torch.float32, torch.bfloat16])

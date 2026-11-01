@@ -854,17 +854,26 @@ class TileLangExecutable:
     backward_ir: Any | None
     dense_summary: bool
     scalar_factorized: Any | None
+    program: Any = field(repr=False, compare=False)
     rank_one_factored: Any | None = None
     symmetric_rank_one: bool = False
     composition: Composition | None = None
     backward_binding: Any | None = None
     chunked_recipe: Any | None = None
     _runtime_family: str = field(init=False, repr=False)
+    _execution: Any = field(init=False, repr=False, compare=False)
 
     def __post_init__(self):
         object.__setattr__(
             self, "_runtime_family", runtime_family_for(self.plan.candidate)
         )
+        from ..runtime.execution import SelectedExecution
+
+        object.__setattr__(self, "_execution", SelectedExecution(self.program, self))
+
+    def execute(self, **validated_call):
+        """Execute a validated invocation with the compiler-bound adapter."""
+        return self._execution(**validated_call)
 
     @property
     def runtime_family(self) -> str:
@@ -926,12 +935,6 @@ class TileLangExecutable:
         from ..lowering.chunked import chunked_elementwise_dense
 
         return chunked_elementwise_dense(**kwargs)
-
-    def product_feature_chunked_dense(self, **kwargs):
-        """Run the typed ProductFeature chunked inference schedule."""
-        from ..lowering.chunked import execute_chunked_states
-
-        return execute_chunked_states(**kwargs)
 
     def factored_recurrence_dense(self, **kwargs):
         from ..lowering.lowrank.factored import factored_recurrence_dense
@@ -1413,6 +1416,7 @@ def compile_plan(
             backward_ir,
             dense_summary,
             scalar_factorized,
+            program=operator._program,
             rank_one_factored=rank_one_factored,
             symmetric_rank_one=bool(
                 rank_one_factored is not None and rank_one_factored.symmetric_rank_one
@@ -1565,6 +1569,7 @@ def compile_plan(
         backward_ir=backward_ir,
         dense_summary=dense_summary,
         scalar_factorized=scalar_factorized,
+        program=operator._program,
         rank_one_factored=(
             rank_one_factored
             if candidate.lowerer == "tilelang-factored-recurrence"

@@ -857,42 +857,85 @@ def execute_chunked_states(
             recipe = replace(recipe, native_product_normalized=None)
     if recipe is None:
         return None
+    return bind_chunked_executor(recipe)(
+        algorithm,
+        values=values,
+        initial_states=initial_states,
+        segment=segment,
+        role_sizes=role_sizes,
+        heads=heads,
+        token_count=token_count,
+        device=device,
+        return_final_state=return_final_state,
+        sequence_length=sequence_length,
+    )
+
+
+def bind_chunked_executor(recipe):
+    """Bind the proven native/materialized adapter once per compiled candidate."""
+    from functools import partial
+
     if recipe.native_product_normalized is not None:
         from .readout.product_native import execute_native_product_normalized
 
-        return execute_native_product_normalized(
+        return partial(
+            _execute_native_states,
+            execute_native_product_normalized,
             recipe.native_product_normalized,
-            values,
-            initial_states,
-            sequence_count=token_count // sequence_length,
-            sequence_length=sequence_length,
-            heads=heads,
-            return_final_state=return_final_state,
         )
     if recipe.native_normalized is not None:
         from .readout.native import execute_native_normalized
 
-        return execute_native_normalized(
-            recipe.native_normalized,
-            values,
-            initial_states,
-            sequence_count=token_count // sequence_length,
-            sequence_length=sequence_length,
-            heads=heads,
-            return_final_state=return_final_state,
+        return partial(
+            _execute_native_states, execute_native_normalized, recipe.native_normalized
         )
     if recipe.native_diagonal is not None:
         from .diagonal.diagonal_native import execute_native_diagonal
 
-        return execute_native_diagonal(
-            recipe.native_diagonal,
-            values,
-            initial_states,
-            sequence_count=token_count // sequence_length,
-            sequence_length=sequence_length,
-            heads=heads,
-            return_final_state=return_final_state,
+        return partial(
+            _execute_native_states, execute_native_diagonal, recipe.native_diagonal
         )
+    return partial(_execute_materialized_states, recipe=recipe)
+
+
+def _execute_native_states(
+    execute,
+    recipe,
+    algorithm,
+    *,
+    values,
+    initial_states,
+    token_count,
+    sequence_length,
+    heads,
+    return_final_state,
+    **_,
+):
+    return execute(
+        recipe,
+        values,
+        initial_states,
+        sequence_count=token_count // sequence_length,
+        sequence_length=sequence_length,
+        heads=heads,
+        return_final_state=return_final_state,
+    )
+
+
+def _execute_materialized_states(
+    algorithm,
+    *,
+    values,
+    initial_states,
+    segment,
+    role_sizes,
+    heads,
+    token_count,
+    device,
+    return_final_state,
+    sequence_length,
+    recipe,
+):
     from ...stateful_operator import (
         Add,
         Abs,
