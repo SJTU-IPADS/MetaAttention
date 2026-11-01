@@ -9,12 +9,20 @@ from pathlib import Path
 import platform
 import subprocess
 import tempfile
-from typing import Any, Mapping
+from typing import Any, Callable, Mapping
 
 import torch
 
 from ..runtime.workspace import WorkspacePolicy as WorkspacePolicy
 from ..runtime.workspace import FACTORED_INFERENCE_WINDOW as FACTORED_INFERENCE_WINDOW
+from .capabilities import (
+    LoweringFacts,
+    factored_backward_supported,
+    readout_cut_supported,
+    scalar_factorized_supported,
+    shared_scores_supported,
+    vector_propagation_supported,
+)
 from .device import (
     DEFAULT_DEVICE_PROFILE,
     DeviceProfile,
@@ -302,6 +310,32 @@ class CandidateLowerer:
     name: str
     representations: tuple[PlanRepresentation, ...]
     runtime_family: str = "generic"
+    requires: Callable[[LoweringFacts], bool] | None = None
+
+    def propose(
+        self, plan: MathematicalPlan, shape: EstimationShape, facts: LoweringFacts
+    ) -> tuple[LoweredCandidate, CandidateEstimate] | None:
+        """Own implementation admission as well as shape/resource feasibility."""
+        if self.requires is not None and not self.requires(facts):
+            return None
+        # These representations already carry their generic/native proof.
+        if (
+            plan.representation
+            not in {
+                PlanRepresentation.GENERIC_DENSE_AFFINE,
+                PlanRepresentation.RANK_ONE_DIAGONAL,
+                PlanRepresentation.NATIVE_NORMALIZED,
+                PlanRepresentation.NATIVE_DIAGONAL,
+            }
+            and not facts.eligibility(self.runtime_family)[0]
+        ):
+            return None
+        candidate = self.lower(
+            plan, shape, maximum_workspace_bytes=facts.target.workspace_bytes
+        )
+        if candidate is None:
+            return None
+        return candidate, self.estimate(plan, shape)
 
     def lower(
         self,
@@ -564,6 +598,7 @@ LOWERERS = (
         "tilelang-vector-propagation",
         (PlanRepresentation.VECTOR_PROPAGATION,),
         "vector-propagation",
+        requires=vector_propagation_supported,
     ),
     CandidateLowerer(
         "tilelang-elementwise", (PlanRepresentation.AXIS_SCALE,), "axis-scale"
@@ -587,11 +622,13 @@ LOWERERS = (
         "tilelang-scalar-factorized",
         (PlanRepresentation.SCALAR_FACTORIZED,),
         "scalar-factorized",
+        requires=scalar_factorized_supported,
     ),
     CandidateLowerer(
         "tilelang-factored-recurrence",
         (PlanRepresentation.FACTORED_RECURRENCE,),
         "factored-recurrence",
+        requires=factored_backward_supported,
     ),
     CandidateLowerer(
         "tilelang-product-feature-chunked",
@@ -607,11 +644,13 @@ LOWERERS = (
         "tilelang-chunked-shared-scores",
         (PlanRepresentation.CHUNKED_STATEFUL,),
         "chunked-stateful",
+        requires=shared_scores_supported,
     ),
     CandidateLowerer(
         "tilelang-chunked-readout-cut",
         (PlanRepresentation.CHUNKED_STATEFUL,),
         "chunked-stateful",
+        requires=readout_cut_supported,
     ),
     CandidateLowerer(
         "tilelang-rank-one-diagonal",
@@ -632,11 +671,13 @@ LOWERERS = (
         "tilelang-native-diagonal-shared-scores",
         (PlanRepresentation.NATIVE_DIAGONAL,),
         "native-diagonal",
+        requires=shared_scores_supported,
     ),
     CandidateLowerer(
         "tilelang-native-diagonal-readout-cut",
         (PlanRepresentation.NATIVE_DIAGONAL,),
         "native-diagonal",
+        requires=readout_cut_supported,
     ),
     CandidateLowerer(
         "reference-stateful",
@@ -1034,21 +1075,14 @@ def compile_plan(
 ) -> TileLangExecutable:
     """Enumerate mathematical plans, then bind one stable executable candidate."""
     device_profile = resolve_device_profile(target)
-    from ..lowering.chunked import compile_chunked_recipe
-
-    chunked_recipe = (
-        compile_chunked_recipe(operator._program, dict(compilation.role_sizes))
-        if mode == "dense"
-        else None
-    )
-    from ..lowering.structured import product_feature_chunked_eligibility
-
+    facts = compilation.lowering
+    chunked_recipe = facts.chunked_recipe
     product_feature_chunked = (
         optimized
         and mode == "dense"
         and backward_ir is None
         and target.device_type == "cuda"
-        and product_feature_chunked_eligibility(operator._program)[0]
+        and facts.eligibility("product-feature-chunked")[0]
     )
 
     chunked_stateful = (
@@ -1124,8 +1158,6 @@ def compile_plan(
         )
         for representation in representations
     )
-    from ..lowering.structured import RUNTIME_FAMILY_ELIGIBILITY
-
     fixed_sizes = dict(compilation.role_sizes)
     state = operator._program.states[0]
     from ..lowering.chunked import chunked_states_workspace
@@ -1294,79 +1326,13 @@ def compile_plan(
     candidate_list: list[LoweredCandidate] = []
     estimates: dict[LoweredCandidate, CandidateEstimate] = {}
     for item in mathematical_plans:
-        native_diagonal = (
-            None if chunked_recipe is None else chunked_recipe.native_diagonal
-        )
         for lowerer in LOWERERS:
-            if lowerer.name in (
-                "tilelang-chunked-shared-scores",
-                "tilelang-native-diagonal-shared-scores",
-            ) and (
-                native_diagonal is None
-                or native_diagonal.softmax is not None
-                or any(len(state.injections) != 1 for state in native_diagonal.states)
-                or not any(state.identity_columns for state in native_diagonal.states)
-            ):
+            proposal = lowerer.propose(item, shape, facts)
+            if proposal is None:
                 continue
-            if lowerer.name in (
-                "tilelang-chunked-readout-cut",
-                "tilelang-native-diagonal-readout-cut",
-            ) and (
-                native_diagonal is None
-                or native_diagonal.softmax is None
-                or not native_diagonal.fused_softmax
-            ):
-                continue
-            if lowerer.runtime_family == "vector-propagation" and (
-                mode != "dense"
-                or backward_ir is not None
-                or target.device_type != "cuda"
-            ):
-                continue
-            if lowerer.runtime_family == "scalar-factorized" and (
-                backward_ir is not None
-                or scalar_factorized is None
-                or scalar_factorized.dense is None
-                or scalar_factorized.injection_count != 1
-                or scalar_factorized.readout_count != 1
-            ):
-                # the plan is only its fused kernel: a compiled backward has no
-                # binding for it, and anything else falls through to the summary
-                # path this candidate would mis-price
-                continue
-            if (
-                lowerer.runtime_family == "factored-recurrence"
-                and backward_ir is not None
-                and (
-                    rank_one_factored is None
-                    or any(
-                        operation.kind
-                        not in {"column-scale", "row-scale", "scale", "rank-one"}
-                        for operation in rank_one_factored.operations
-                    )
-                )
-            ):
-                continue
-            if (
-                item.representation
-                not in {
-                    PlanRepresentation.GENERIC_DENSE_AFFINE,
-                    PlanRepresentation.RANK_ONE_DIAGONAL,
-                    PlanRepresentation.NATIVE_NORMALIZED,
-                    PlanRepresentation.NATIVE_DIAGONAL,
-                }
-                and not RUNTIME_FAMILY_ELIGIBILITY.get(
-                    lowerer.runtime_family, lambda _: (True, None)
-                )(operator._program)[0]
-            ):
-                continue
-            candidate = lowerer.lower(
-                item, shape, maximum_workspace_bytes=target.workspace_bytes
-            )
-            if candidate is None:
-                continue
+            candidate, estimate = proposal
             candidate_list.append(candidate)
-            estimates[candidate] = lowerer.estimate(item, shape)
+            estimates[candidate] = estimate
     candidates = tuple(candidate_list)
     if not candidates:
         from ...stateful_operator import StatefulCompilationError

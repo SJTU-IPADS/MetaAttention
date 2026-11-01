@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import os
-from dataclasses import dataclass, fields, is_dataclass
+from dataclasses import dataclass, field, fields, is_dataclass
 import hashlib
 import json
 import math
@@ -950,6 +950,7 @@ class _Compilation:
     mode: str
     options: CompileOptions
     validation: _ValidationRecipe
+    lowering: Any = field(default=None, repr=False, compare=False)
 
 
 @dataclass(frozen=True)
@@ -1165,19 +1166,18 @@ class StatefulOperator:
             validate_compile_roles,
         )
 
+        from .stateful.compile.capabilities import LoweringFacts
+
         program = self._program
         ordered = validate_compile_roles(program, role_sizes, target, mode)
+        lowering = LoweringFacts(program, ordered, target, mode, options)
         state = program.states[0]
         # The {64,128} pair is a capability of the specialized matrix kernels.
         # Native diagonal lowering has its own tiled kernels and supports
         # arbitrary feature extents, so use its structural recipe as the
         # capability proof here rather than treating every non-reference IR as
         # a matrix-kernel program.
-        native_diagonal = (
-            options.optimized
-            and not options.backward
-            and _native_diagonal_available(self._program, role_sizes, mode=mode)
-        )
+        native_diagonal = lowering.native_diagonal_available
         if (
             target.device_type == "cuda"
             and not self._program._analysis.reference_required
@@ -1207,7 +1207,7 @@ class StatefulOperator:
             reference_required=program._analysis.reference_required,
             native_diagonal=native_diagonal,
         )
-        return _Compilation(ordered, target, mode, options, validation)
+        return _Compilation(ordered, target, mode, options, validation, lowering)
 
     def _compilation_key(self, compilation: _Compilation) -> str:
         return _canonical_identity(
@@ -1325,21 +1325,6 @@ def _segmented_elementwise_scan(
         )
         offset *= 2
     return scale, bias
-
-
-def _native_diagonal_available(
-    algorithm: AlgorithmIR,
-    role_sizes: Mapping[LogicalRole, int],
-    *,
-    mode: str,
-) -> bool:
-    """Return whether the selected dense lowering has native diagonal support."""
-    if mode != "dense" or not hasattr(algorithm, "transitions"):
-        return False
-    from .stateful.lowering.chunked import compile_chunked_recipe
-
-    recipe = compile_chunked_recipe(algorithm, dict(role_sizes))
-    return recipe is not None and recipe.native_diagonal is not None
 
 
 def _dense_summary_required(algorithm: AlgorithmIR) -> bool:
