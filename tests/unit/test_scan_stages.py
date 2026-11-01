@@ -438,3 +438,58 @@ def test_staged_shift_keeps_sequence_history_at_window_boundary():
         state = 0.7 * state + (x[:, :, token - 1] if token else 0)
         wanted.append(state)
     torch.testing.assert_close(result.outputs["out"], torch.stack(wanted, 2))
+
+
+@pytest.mark.parametrize("mode", ["dense", "packed"])
+def test_checkpoint_does_not_discount_the_staged_workspace_contract(mode):
+    normal = _compile(_program(), mode=mode)
+    checked = _program().compile(
+        role_sizes={H: 2, F: 3},
+        target=Target(device_type="cpu"),
+        mode=mode,
+        backward=True,
+        checkpoint=True,
+    )
+    kwargs = {"sequence_count": 2}
+    if mode == "dense":
+        kwargs["sequence_length"] = 1031
+    assert checked.workspace_bytes(2062, **kwargs) == normal.workspace_bytes(
+        2062, **kwargs
+    )
+
+
+def test_staged_workspace_rejection_precedes_child_execution(monkeypatch):
+    compiled = _compile(_program(), backward=False, workspace=90000)
+
+    def unexpected_execution(*args, **kwargs):
+        pytest.fail("a rejected workspace must not execute a child scan")
+
+    monkeypatch.setattr(compiled, "_execute_stages", unexpected_execution)
+    with pytest.raises(StatefulCompilationError) as error:
+        compiled(x=torch.ones(2, 2, 1031, 3))
+    assert error.value.category == "RUNTIME_RESOURCE"
+    assert error.value.path == "workspace"
+
+
+def test_staged_windows_release_previous_outputs_before_preparing_next(monkeypatch):
+    import weakref
+
+    compiled = _compile(_program(), backward=False, workspace=150000)
+    execute = compiled._execute_stages
+    previous = []
+    lengths = []
+
+    def record_window(inputs, states, runtime, offsets, return_final):
+        assert all(reference() is None for reference in previous)
+        assert inputs["x"].is_contiguous()
+        lengths.append(runtime.uniform_length)
+        result = execute(inputs, states, runtime, offsets, return_final)
+        previous[:] = [weakref.ref(value) for value in result.outputs]
+        return result
+
+    monkeypatch.setattr(compiled, "_execute_stages", record_window)
+    result = compiled(x=torch.ones(2, 2, 1031, 3))
+    assert len(lengths) > 1 and sum(lengths) == 1031
+    assert result.final_state is None
+    assert result.outputs["out"].shape == (2, 2, 1031, 3)
+    assert all(reference() is None for reference in previous)

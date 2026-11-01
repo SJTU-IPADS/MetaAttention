@@ -12,6 +12,7 @@ import pytest
 
 from attn_engine import HeadRole, ProductFeatureRole, Target
 from examples.gated_delta_rule import gated_delta_rule
+from examples.gated_oja_rule import gated_oja_rule
 from examples.linear_attention import gla_attention, simple_gla_attention
 
 pytestmark = pytest.mark.unit
@@ -26,12 +27,12 @@ def _allow_cpu_stateful_operator(monkeypatch):
     monkeypatch.setenv("STATEFUL_OPERATOR_TEST_CPU", "1")
 
 
-def _compile(factory, *, seqlen: int, backward: bool, size: int = ROWS):
+def _compile(factory, *, seqlen: int, backward: bool, size: int = ROWS, columns=None):
     kwargs = {"HQ": 1} if "gated_delta_rule" in factory.__module__ else {}
-    operator = factory(1, HEADS, seqlen, size, size, **kwargs)
-    sizes: dict = {operator.algorithm.states[0].head_role: HEADS}
-    for role in operator.algorithm.states[0].feature_roles:
-        sizes[role] = size
+    operator = factory(1, HEADS, seqlen, size, columns or size, **kwargs)
+    state = operator.algorithm.states[0]
+    sizes: dict = {state.head_role: HEADS}
+    sizes.update(zip(state.feature_roles, (size, columns or size), strict=True))
     for spec in operator.algorithm.inputs:
         for role in spec.roles:
             if isinstance(role, HeadRole):
@@ -233,3 +234,85 @@ def test_product_workspace_rejects_uncharged_tail_and_batch_scratch(family, leng
         replace(boundary, maximum_bytes=required - 1).required_bytes(
             case.batch * length, sequence_count=case.batch, sequence_length=length
         )
+
+
+@pytest.mark.parametrize(
+    "factory", [gated_delta_rule, gated_oja_rule, gla_attention, simple_gla_attention]
+)
+@pytest.mark.parametrize("backward", [False, True])
+@pytest.mark.parametrize("length", [65, 1031])
+def test_tuning_invocation_uses_the_published_workspace_contract(
+    monkeypatch, factory, backward, length
+):
+    import torch
+
+    from attn_engine.stateful.compile.benchmark import invocation_factory
+    from attn_engine.stateful.compile.plan import WorkloadPoint
+    from attn_engine.stateful_operator import CompiledStatefulOperator
+
+    compiled = _compile(
+        factory,
+        seqlen=length,
+        backward=backward,
+        size=64,
+        columns=128 if factory is gated_oja_rule else 64,
+    )
+    executable = compiled.operator._plans[compiled.specialization]
+    recorded = []
+
+    def record_invocation(probe, **kwargs):
+        recorded.append(probe.operator._plans[probe.specialization].plan.workspace)
+
+    monkeypatch.setattr(CompiledStatefulOperator, "__call__", record_invocation)
+    monkeypatch.setattr(torch.cuda, "mem_get_info", lambda device: (1 << 40, 1 << 40))
+    build = invocation_factory(
+        compiled.operator,
+        compiled.compilation,
+        executable,
+        executable.plan.mathematical_plans,
+        torch.device("cpu"),
+    )
+    invoke = build(
+        executable.plan.candidate,
+        executable.plan.kernel_config.values,
+        WorkloadPoint(2, 2 * length, "uniform"),
+    )
+    invoke()
+    assert recorded == [executable.plan.workspace]
+
+
+@pytest.mark.parametrize("backward", [False, True])
+def test_compiled_workspace_query_matches_runtime_resource_gate(backward):
+    from attn_engine import StatefulCompilationError
+
+    compiled = _compile(gated_delta_rule, seqlen=1031, backward=backward, size=64)
+    _, policy = _workspace(compiled)
+    assert compiled.workspace_bytes(
+        2062, sequence_count=2, sequence_length=1031
+    ) == policy.required_bytes(2062, sequence_count=2, sequence_length=1031)
+    with pytest.raises(StatefulCompilationError) as error:
+        compiled.workspace_bytes(1 << 25, sequence_length=1 << 25)
+    assert error.value.category == "RUNTIME_RESOURCE"
+    assert error.value.path == "workspace"
+
+
+@pytest.mark.parametrize(
+    "workload",
+    [
+        {"token_count": -1},
+        {"token_count": True},
+        {"token_count": 2.5},
+        {"token_count": 2, "sequence_count": -1},
+        {"token_count": 2, "sequence_length": False},
+        {"token_count": 2, "sequence_length": -1},
+        {"token_count": 2, "sequence_count": 2, "sequence_length": 2},
+    ],
+)
+def test_compiled_workspace_query_rejects_malformed_workloads(workload):
+    from attn_engine import StatefulCompilationError
+
+    compiled = _compile(gated_delta_rule, seqlen=65, backward=False, size=64)
+    with pytest.raises(StatefulCompilationError) as error:
+        compiled.workspace_bytes(**workload)
+    assert error.value.category == "RUNTIME_RESOURCE"
+    assert error.value.path == "workspace"

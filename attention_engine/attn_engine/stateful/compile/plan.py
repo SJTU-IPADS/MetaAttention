@@ -13,6 +13,8 @@ from typing import Any, Mapping
 
 import torch
 
+from ..runtime.workspace import WorkspacePolicy as WorkspacePolicy
+from ..runtime.workspace import FACTORED_INFERENCE_WINDOW as FACTORED_INFERENCE_WINDOW
 from .device import (
     DEFAULT_DEVICE_PROFILE,
     DeviceProfile,
@@ -173,10 +175,6 @@ class KernelConfig:
 # launch costs a fixed slab of traffic it could otherwise have overlapped.
 _FLOPS_PER_BYTE = 1 / 16
 _BYTES_PER_LAUNCH = 4_096
-
-# Dense inference carries State between windows; factor preparation and replay
-# scratch need only cover this many tokens per sequence.
-FACTORED_INFERENCE_WINDOW = 1024
 
 # The representations whose runtime composes a per-token summary, runs one prefix
 # pass over it, and contracts the readout in a separate pass.
@@ -745,65 +743,6 @@ class ContextContract:
         for required in self.required:
             if available.get(required.name) != required:
                 raise ValueError(f"incompatible context value: {required.name}")
-
-
-@dataclass(frozen=True)
-class WorkspacePolicy:
-    """Per-token workspace bound, tightest where the compiled path allows.
-
-    ``aligned_bytes_per_token`` applies when the runtime workload divides
-    ``alignment_tokens`` and the compilation can reach the chunked schedule;
-    every other workload is bounded by ``bytes_per_token``, which covers the
-    per-token fallback the same plan will take.
-
-    Dense chunk scratch is charged per sequence and ceiling-divided chunk,
-    including a final-State allowance; it does not require token alignment.
-    ``inference_window_tokens`` bounds scratch for dense factored inference,
-    while ``output_bytes_per_token`` still charges the complete retained output.
-    """
-
-    bytes_per_token: int
-    maximum_bytes: int
-    aligned_bytes_per_token: int | None = None
-    alignment_tokens: int = 0
-    bytes_per_chunk: int = 0
-    chunk_tokens: int = 64
-    inference_window_tokens: int = 0
-    output_bytes_per_token: int = 0
-
-    def required_bytes(
-        self,
-        token_count: int,
-        *,
-        sequence_count: int = 1,
-        sequence_length: int | None = None,
-    ) -> int:
-        per_token = self.bytes_per_token
-        if (
-            self.aligned_bytes_per_token is not None
-            and self.alignment_tokens
-            and token_count % self.alignment_tokens == 0
-        ):
-            per_token = self.aligned_bytes_per_token
-        length = sequence_length if sequence_length is not None else token_count
-        live_tokens = token_count
-        if self.inference_window_tokens:
-            length = min(length, self.inference_window_tokens)
-            live_tokens = min(token_count, sequence_count * length)
-        required = live_tokens * per_token + token_count * self.output_bytes_per_token
-        if (
-            self.bytes_per_chunk
-            and token_count
-            and (
-                self.aligned_bytes_per_token is None
-                or per_token == self.aligned_bytes_per_token
-            )
-        ):
-            chunks = (length + self.chunk_tokens - 1) // self.chunk_tokens
-            required += sequence_count * (chunks + 1) * self.bytes_per_chunk
-        if required > self.maximum_bytes:
-            raise RuntimeError("runtime workload exceeds compiled resource envelope")
-        return required
 
 
 @dataclass(frozen=True)
@@ -1558,32 +1497,12 @@ def compile_plan(
             ),
         )
     )
-    selected_estimate = estimates[candidate]
-    workspace = WorkspacePolicy(
-        bytes_per_token=selected_estimate.workspace_bytes_per_token,
-        maximum_bytes=target.workspace_bytes,
-        aligned_bytes_per_token=selected_estimate.aligned_workspace_bytes_per_token,
-        alignment_tokens=selected_estimate.alignment_tokens,
-        bytes_per_chunk=selected_estimate.workspace_bytes_per_chunk,
-        # Factored inference can use 16-token WY/short replay chunks. Charge
-        # that worst case even when long non-WY calls select 64-token chunks.
-        chunk_tokens=16
-        if selected_plan.representation == PlanRepresentation.FACTORED_RECURRENCE
-        else 64,
-        inference_window_tokens=FACTORED_INFERENCE_WINDOW
-        if (
-            selected_plan.representation == PlanRepresentation.FACTORED_RECURRENCE
-            and mode == "dense"
-            and backward_ir is None
-        )
-        else 0,
-        output_bytes_per_token=4 * heads * readout_count * output_width
-        if (
-            selected_plan.representation == PlanRepresentation.FACTORED_RECURRENCE
-            and mode == "dense"
-            and backward_ir is None
-        )
-        else 0,
+    workspace = WorkspacePolicy.for_candidate(
+        candidate,
+        estimates[candidate],
+        compilation=compilation,
+        algorithm=operator._program,
+        rank_one_factored=rank_one_factored,
     )
     backward_candidate = None
     backward_kernel_config = None

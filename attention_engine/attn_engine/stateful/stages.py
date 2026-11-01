@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, replace
+from dataclasses import dataclass
 from typing import Mapping, Sequence as TypingSequence
 import math
 
@@ -28,6 +28,8 @@ from ..stateful_operator import (
     _canonical_identity,
     _expressions,
 )
+
+from .runtime.workspace import StageWorkspace
 
 
 @dataclass(frozen=True)
@@ -292,7 +294,7 @@ class CompiledScanStages:
         self.checkpoint = checkpoint
         # Shift reads sequence-local input history, which mathematical States do
         # not carry across invocation boundaries.
-        self.windowable = not any(
+        windowable = not any(
             isinstance(expression, Shift)
             for stage in operator.algorithm.stages
             for expression in _expressions(stage.algorithm)
@@ -328,17 +330,17 @@ class CompiledScanStages:
         )
         # Count expression tensors as well as trajectory copies. Each typed DAG
         # node is charged even if execution can reuse it: a conservative baseline.
-        self.materialized_bytes_per_token = 0
+        materialized_bytes_per_token = 0
         for stage in operator.algorithm.stages:
             head = role_sizes[stage.algorithm.states[0].head_role]
             for _, typed in stage.algorithm._analysis.expression_types:
                 elements = head * math.prod(
                     role_sizes[r] for r in typed.roles if isinstance(r, FeatureRole)
                 )
-                self.materialized_bytes_per_token += elements * 4
+                materialized_bytes_per_token += elements * 4
             for readout in stage.algorithm.readouts:
                 spec = _output_spec(stage, readout.name)
-                self.materialized_bytes_per_token += (
+                materialized_bytes_per_token += (
                     head
                     * math.prod(
                         role_sizes[r] for r in spec.roles if isinstance(r, FeatureRole)
@@ -346,117 +348,41 @@ class CompiledScanStages:
                     * 8
                 )
 
-    def workspace_bytes(self, token_count, *, sequence_count=1, sequence_length=None):
-        for name, value in (
-            ("token_count", token_count),
-            ("sequence_count", sequence_count),
-        ):
-            if not isinstance(value, int) or isinstance(value, bool) or value < 0:
-                raise StatefulCompilationError(
-                    "RUNTIME_RESOURCE", "workspace", {name: value}
-                )
-        if sequence_length is not None and (
-            not isinstance(sequence_length, int)
-            or isinstance(sequence_length, bool)
-            or sequence_length < 0
-        ):
-            raise StatefulCompilationError(
-                "RUNTIME_RESOURCE", "workspace", {"sequence_length": sequence_length}
-            )
-        if (
-            sequence_length is not None
-            and token_count != sequence_count * sequence_length
-        ):
-            raise StatefulCompilationError(
-                "RUNTIME_RESOURCE", "workspace", {"sequence_length": sequence_length}
-            )
-        return self._workspace_schedule(token_count, sequence_count, sequence_length)[1]
-
-    def _workspace_schedule(self, token_count, sequence_count, sequence_length):
-        if (
-            self.backward
-            or self.mode != "dense"
-            or sequence_length is None
-            or not self.windowable
-        ):
-            return 0, self._stage_workspace_bytes(
-                token_count, sequence_count, sequence_length
-            )
-        from .compile.plan import FACTORED_INFERENCE_WINDOW
-
-        stages = {stage.name: stage for stage in self.operator.algorithm.stages}
-        output_bytes_per_token = 0
-        for output in self.operator.algorithm.outputs:
-            spec = _output_spec(stages[output.stage], output.output)
-            output_bytes_per_token += 4 * math.prod(
-                self.role_sizes[role]
-                for role in spec.roles
+        stages = {stage.name: stage for stage in operator.algorithm.stages}
+        output_bytes_per_token = sum(
+            4
+            * math.prod(
+                role_sizes[role]
+                for role in _output_spec(stages[output.stage], output.output).roles
                 if isinstance(role, (HeadRole, FeatureRole))
             )
-        retained = token_count * output_bytes_per_token
-        window = min(sequence_length, FACTORED_INFERENCE_WINDOW)
-        while True:
-            try:
-                required = retained + self._stage_workspace_bytes(
-                    sequence_count * window, sequence_count, window
-                )
-                if required <= self.target.workspace_bytes:
-                    return window, required
-            except StatefulCompilationError as error:
-                if error.category != "RUNTIME_RESOURCE":
-                    raise
-            if window <= 1:
-                raise StatefulCompilationError(
-                    "RUNTIME_RESOURCE",
-                    "workspace",
-                    {
-                        "maximum": self.target.workspace_bytes,
-                        "reason": "retained outputs and one-token stage scratch exceed budget",
-                    },
-                )
-            window = max(1, window // 2)
-
-    def _stage_workspace_bytes(self, token_count, sequence_count, sequence_length):
+            for output in operator.algorithm.outputs
+        )
         state_elements = sum(
-            self.role_sizes[state.head_role]
-            * math.prod(self.role_sizes[r] for r in state.feature_roles)
-            for state in self.operator.algorithm.states
+            role_sizes[state.head_role]
+            * math.prod(role_sizes[r] for r in state.feature_roles)
+            for state in operator.algorithm.states
         )
-        required = (
-            token_count * self.materialized_bytes_per_token
-            + sequence_count * state_elements * 12
+        self._workspace = StageWorkspace(
+            maximum_bytes=target.workspace_bytes,
+            materialized_bytes_per_token=materialized_bytes_per_token,
+            state_bytes_per_sequence=state_elements * 12,
+            output_bytes_per_token=output_bytes_per_token,
+            children=tuple(
+                (child.workspace_bytes, isinstance(child, CompiledStatefulOperator))
+                for child in self.children.values()
+            ),
+            mode=mode,
+            backward=backward,
+            windowable=windowable,
         )
-        for child in self.children.values():
-            if hasattr(child, "workspace_bytes"):
-                required += child.workspace_bytes(
-                    token_count,
-                    sequence_count=sequence_count,
-                    sequence_length=sequence_length,
-                )
-                continue
-            policy = child.operator._plans[child.specialization].plan.workspace
-            try:
-                cost = policy.required_bytes(
-                    token_count,
-                    sequence_count=sequence_count,
-                    sequence_length=sequence_length,
-                )
-            except RuntimeError as error:
-                raise StatefulCompilationError(
-                    "RUNTIME_RESOURCE", "workspace", {"reason": str(error)}
-                ) from error
-            # Parallel Torch scan saves each doubling level for backward. This
-            # bound deliberately retains all stages until the whole VJP completes.
-            if self.backward:
-                cost *= 2 + max(1, (max(1, token_count) - 1).bit_length())
-            required += cost
-        if required > self.target.workspace_bytes:
-            raise StatefulCompilationError(
-                "RUNTIME_RESOURCE",
-                "workspace",
-                {"required": required, "maximum": self.target.workspace_bytes},
-            )
-        return required
+
+    def workspace_bytes(self, token_count, *, sequence_count=1, sequence_length=None):
+        return self._workspace.schedule(
+            token_count,
+            sequence_count=sequence_count,
+            sequence_length=sequence_length,
+        ).required_bytes
 
     def __call__(
         self,
@@ -503,52 +429,34 @@ class CompiledScanStages:
             raise StatefulCompilationError(
                 "RUNTIME_GRAD", "inputs", {"backward": "not compiled"}
             )
-        window, _ = self._workspace_schedule(
-            runtime.token_count, runtime.sequence_count, runtime.uniform_length
+        schedule = self._workspace.schedule(
+            runtime.token_count,
+            sequence_count=runtime.sequence_count,
+            sequence_length=runtime.uniform_length,
         )
-        if window and runtime.uniform_length > window:
+        if schedule.window_tokens and runtime.uniform_length > schedule.window_tokens:
             return self._execute_windows(
-                inputs, states, runtime, window, return_final_state
+                inputs, states, runtime, schedule, return_final_state
             )
         return self._execute_stages(
             inputs, states, runtime, sequence_offsets, return_final_state
         )
 
-    def _execute_windows(self, inputs, states, runtime, window, return_final_state):
-        """Finish the DAG per window and carry every stage's mathematical State."""
-        outputs = None
-        length = runtime.uniform_length
-        for begin in range(0, length, window):
-            count = min(window, length - begin)
-            part = {
-                spec.name: (
-                    inputs[spec.name]
-                    .narrow(spec.roles.index(Sequence), begin, count)
-                    .contiguous()
-                    if Sequence in spec.roles
-                    else inputs[spec.name]
-                )
-                for spec in self.operator.algorithm.inputs
-            }
-            segment = replace(
-                runtime,
-                uniform_length=count,
-                token_count=runtime.sequence_count * count,
-            )
-            result = self._execute_stages(part, states, segment, None, True)
-            if outputs is None:
-                outputs = tuple(
-                    torch.empty(
-                        (*value.shape[:2], length, *value.shape[3:]),
-                        dtype=value.dtype,
-                        device=value.device,
-                    )
-                    for value in result.outputs
-                )
-            for output, value in zip(outputs, result.outputs, strict=True):
-                output.narrow(2, begin, count).copy_(value)
-            states = result.final_state.as_dict()
-            del part, result, value
+    def _execute_windows(self, inputs, states, runtime, schedule, return_final_state):
+        """Finish the DAG per budgeted window and carry every stage's State."""
+
+        def execute_window(part, initial, segment):
+            result = self._execute_stages(part, initial, segment, None, True)
+            return result.outputs.values, result.final_state.as_dict()
+
+        outputs, states = schedule.execute(
+            inputs,
+            {spec.name: spec.sequence_axis for spec in self.validation.inputs},
+            runtime,
+            states,
+            execute_window,
+            contiguous_inputs=True,
+        )
         return ExecutionResult(
             NamedOutputTuple(self.validation.output_names, outputs),
             StateTuple(

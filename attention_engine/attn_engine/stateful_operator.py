@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import os
-from dataclasses import dataclass, fields, is_dataclass, replace
+from dataclasses import dataclass, fields, is_dataclass
 import hashlib
 import json
 import math
@@ -970,6 +970,29 @@ class CompiledStatefulOperator:
         self.compilation = compilation
         self.specialization = specialization
 
+    def workspace_bytes(self, token_count, *, sequence_count=1, sequence_length=None):
+        """Query the same resource gate used by invocation and Stage composition."""
+        return self._workspace_schedule(
+            token_count,
+            sequence_count=sequence_count,
+            sequence_length=sequence_length,
+        ).required_bytes
+
+    def _workspace_schedule(
+        self, token_count, *, sequence_count=1, sequence_length=None
+    ):
+        policy = self.operator._plans[self.specialization].plan.workspace
+        try:
+            return policy.schedule(
+                token_count,
+                sequence_count=sequence_count,
+                sequence_length=sequence_length,
+            )
+        except RuntimeError as error:
+            raise StatefulCompilationError(
+                "RUNTIME_RESOURCE", "workspace", {"reason": str(error)}
+            ) from error
+
     def __call__(
         self,
         *,
@@ -1119,16 +1142,11 @@ class StatefulOperator:
                 "RUNTIME_GRAD", "inputs", {"backward": "not compiled"}
             )
         plan = self._plans[compiled.specialization]
-        try:
-            plan.plan.workspace.required_bytes(
-                runtime.token_count,
-                sequence_count=runtime.sequence_count,
-                sequence_length=runtime.uniform_length,
-            )
-        except RuntimeError as error:
-            raise StatefulCompilationError(
-                "RUNTIME_RESOURCE", "workspace", {"reason": str(error)}
-            ) from error
+        schedule = compiled._workspace_schedule(
+            runtime.token_count,
+            sequence_count=runtime.sequence_count,
+            sequence_length=runtime.uniform_length,
+        )
         if (
             plan.runtime_family
             in {
@@ -1206,13 +1224,13 @@ class StatefulOperator:
                 else None
             )
         elif (
-            plan.plan.workspace.inference_window_tokens
+            schedule.window_tokens
             and runtime.device.type == "cuda"
             and not runtime.packed
-            and runtime.uniform_length > plan.plan.workspace.inference_window_tokens
+            and runtime.uniform_length > schedule.window_tokens
         ):
             outputs, final_state = self._execute_factored_windows(
-                inputs, state, runtime, role_sizes, return_final_state, plan
+                inputs, state, runtime, role_sizes, return_final_state, plan, schedule
             )
         else:
             values = self._normalize_inputs(inputs, runtime, role_sizes)
@@ -1227,52 +1245,32 @@ class StatefulOperator:
         )
 
     def _execute_factored_windows(
-        self, inputs, state, runtime, role_sizes, return_final_state, plan
+        self, inputs, state, runtime, role_sizes, return_final_state, plan, schedule
     ):
-        """Bound inference scratch by preparing and replaying one window at a time."""
-        length = runtime.uniform_length
-        window = plan.plan.workspace.inference_window_tokens
-        outputs = None
-        for begin in range(0, length, window):
-            count = min(window, length - begin)
-            part = {
-                spec.name: (
-                    inputs[spec.name].narrow(spec.roles.index(Sequence), begin, count)
-                    if Sequence in spec.roles
-                    else inputs[spec.name]
-                )
-                for spec in self._program.inputs
-            }
-            segment = replace(
-                runtime,
-                uniform_length=count,
-                token_count=runtime.sequence_count * count,
-            )
+        """Prepare/replay one budgeted window and carry the mathematical State."""
+        state_name = self._program.states[0].name
+
+        def execute_window(part, initial, segment):
             values = self._normalize_inputs(part, segment, role_sizes)
-            segment_outputs, final = self._lower_factored_recurrence(
-                values, state, segment, True, plan
+            outputs, final = self._lower_factored_recurrence(
+                values, initial, segment, True, plan
             )
-            if outputs is None:
-                outputs = tuple(
-                    torch.empty(
-                        runtime.sequence_count,
-                        runtime.state_heads,
-                        length,
-                        value.shape[-1],
-                        dtype=value.dtype,
-                        device=runtime.device,
-                    )
-                    for value in segment_outputs
-                )
-            for output, value in zip(outputs, segment_outputs, strict=True):
-                output[:, :, begin : begin + count].copy_(value)
-            state = final[self._program.states[0].name]
-            # Release this window's preparation and outputs before preparing the next.
-            del values, segment_outputs, final, value
+            return outputs, final[state_name]
+
+        outputs, state = schedule.execute(
+            inputs,
+            {
+                spec.name: spec.roles.index(Sequence)
+                if Sequence in spec.roles
+                else None
+                for spec in self._program.inputs
+            },
+            runtime,
+            state,
+            execute_window,
+        )
         final_state = (
-            StateTuple((self._program.states[0].name,), (state,))
-            if return_final_state
-            else None
+            StateTuple((state_name,), (state,)) if return_final_state else None
         )
         return outputs, final_state
 

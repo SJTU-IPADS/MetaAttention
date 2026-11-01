@@ -250,7 +250,7 @@ def test_fla_layout_binding_and_state_contract(monkeypatch, family, variant):
 
 @pytest.mark.gpu
 @pytest.mark.parametrize("family", bench.FAMILIES)
-@pytest.mark.parametrize("length", [1, 64])
+@pytest.mark.parametrize("length", [1, 64, 1031])
 def test_h20_public_inference_selected_lowerers_and_oracle(
     monkeypatch, gpu_device, family, length
 ):

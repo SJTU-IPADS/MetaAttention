@@ -80,3 +80,53 @@ def test_unseen_composition_output_state_and_continuation(
     torch.testing.assert_close(
         second.final_state["memory"].cpu(), final["memory"], rtol=0.02, atol=0.001
     )
+
+
+@pytest.mark.parametrize("family", ["rank", "combined"])
+def test_factored_windows_preserve_batch_tail_outputs_and_continuation(
+    gpu_device, family
+):
+    operator, sizes = make_operator(
+        Mutation(family, 1, 2028), heads=2, rows=64, columns=64
+    )
+    compiled = operator.compile(role_sizes=sizes, target=Target(), mode="dense")
+    executable = operator._plans[compiled.specialization]
+    assert executable.runtime_family == "factored-recurrence"
+    length = executable.plan.workspace.inference_window_tokens + 7
+    assert length > 7
+    values, initial = make_inputs(
+        operator, sizes, batch=2, length=length, seed=2028, device=gpu_device
+    )
+    saved = initial.clone()
+    expected, final = oracle(operator, sizes, values, initial)
+    kwargs = {"initial_state": StateTuple(("memory",), (initial,))}
+    result = compiled(**values, **kwargs, return_final_state=True)
+    check_result(result, expected, final)
+    output_only = compiled(**values, **kwargs)
+    assert output_only.final_state is None
+    for actual, wanted in zip(output_only.outputs, result.outputs, strict=True):
+        torch.testing.assert_close(actual, wanted)
+    split = length - 8
+    first = compiled(
+        **{name: tensor[:, :, :split].contiguous() for name, tensor in values.items()},
+        **kwargs,
+        return_final_state=True,
+    )
+    last = compiled(
+        **{name: tensor[:, :, split:].contiguous() for name, tensor in values.items()},
+        initial_state=StateTuple(
+            ("memory",), (first.final_state["memory"].contiguous(),)
+        ),
+        return_final_state=True,
+    )
+    for name, wanted in expected.items():
+        torch.testing.assert_close(
+            torch.cat((first.outputs[name], last.outputs[name]), 2).cpu().float(),
+            wanted,
+            rtol=0.03,
+            atol=0.001,
+        )
+    torch.testing.assert_close(
+        last.final_state["memory"].cpu(), final["memory"], rtol=0.02, atol=0.001
+    )
+    torch.testing.assert_close(initial, saved, rtol=0, atol=0)

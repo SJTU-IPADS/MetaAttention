@@ -7,7 +7,8 @@ import torch
 
 
 def invocation_factory(operator, compilation, base_executable, plans, device):
-    from .plan import FACTORED_INFERENCE_WINDOW, KernelConfig, WorkspacePolicy, _digest
+    from .plan import KernelConfig, _digest
+    from ..runtime.workspace import WorkspacePolicy
     from ...stateful_operator import (
         Batch,
         Sequence,
@@ -43,31 +44,12 @@ def invocation_factory(operator, compilation, base_executable, plans, device):
         # Conservative live-buffer bound before allocating or launching a candidate.
         elements = sum(math.prod(shape) for shape in shapes.values())
         estimate = dict(base_executable.plan.candidate_estimates)[candidate.identity]
-        windowed = (
-            candidate.lowerer == "tilelang-factored-recurrence"
-            and compilation.mode == "dense"
-            and not compilation.options.backward
-        )
-        recipe = base_executable.rank_one_factored
-        output_width = (
-            roles[states[0].feature_roles[0 if recipe.readout_axis else 1]]
-            if windowed
-            else 0
-        )
-        workspace = WorkspacePolicy(
-            estimate.workspace_bytes_per_token,
-            compilation.target.workspace_bytes,
-            aligned_bytes_per_token=estimate.aligned_workspace_bytes_per_token,
-            alignment_tokens=estimate.alignment_tokens,
-            bytes_per_chunk=estimate.workspace_bytes_per_chunk,
-            chunk_tokens=16
-            if candidate.lowerer == "tilelang-factored-recurrence"
-            else 64,
-            inference_window_tokens=FACTORED_INFERENCE_WINDOW if windowed else 0,
-            output_bytes_per_token=4
-            * roles[states[0].head_role]
-            * len(operator.algorithm.readouts)
-            * output_width,
+        workspace = WorkspacePolicy.for_candidate(
+            candidate,
+            estimate,
+            compilation=compilation,
+            algorithm=operator._program,
+            rank_one_factored=base_executable.rank_one_factored,
         )
         required = workspace.required_bytes(
             sum(lengths), sequence_count=len(lengths), sequence_length=max(lengths)
