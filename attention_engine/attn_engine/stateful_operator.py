@@ -971,6 +971,20 @@ class CompiledStatefulOperator:
         self.operator = operator
         self.compilation = compilation
         self.specialization = specialization
+        self._bound_executable = None
+
+    @classmethod
+    def _from_executable(cls, operator, compilation, executable):
+        """Create an unpublished callable without registering a specialization."""
+        compiled = cls(operator, compilation, executable.plan.binary_identity)
+        compiled._bound_executable = executable
+        return compiled
+
+    @property
+    def _executable(self):
+        if self._bound_executable is not None:
+            return self._bound_executable
+        return self.operator._plans[self.specialization]
 
     def workspace_bytes(self, token_count, *, sequence_count=1, sequence_length=None):
         """Query the same resource gate used by invocation and Stage composition."""
@@ -983,7 +997,7 @@ class CompiledStatefulOperator:
     def _workspace_schedule(
         self, token_count, *, sequence_count=1, sequence_length=None
     ):
-        policy = self.operator._plans[self.specialization].plan.workspace
+        policy = self._executable.plan.workspace
         try:
             return policy.schedule(
                 token_count,
@@ -1122,7 +1136,7 @@ class StatefulOperator:
             default_states=self._zero_states,
             return_final_state=return_final_state,
         )
-        executable = self._plans[compiled.specialization]
+        executable = compiled._executable
         schedule = compiled._workspace_schedule(
             runtime.token_count,
             sequence_count=runtime.sequence_count,

@@ -1376,53 +1376,31 @@ def compile_plan(
             "target.workspace_bytes",
             {"reason": "no feasible lowered candidate"},
         )
-    candidate_estimates = tuple(
-        sorted(
-            ((item.identity, estimates[item]) for item in candidates),
-            key=lambda pair: (pair[1].cost, pair[0]),
-        )
+    from .binding import CandidateBinding
+
+    binding = CandidateBinding(
+        program=operator._program,
+        compilation=compilation,
+        source_identity=source_identity,
+        feature_sizes=feature_sizes,
+        mathematical_plans=mathematical_plans,
+        candidates=candidates,
+        estimates=estimates,
+        shape=shape,
+        device_profile=device_profile,
+        policy_version=WORKLOAD_POLICY.version,
+        backward_ir=backward_ir,
+        dense_summary=dense_summary,
+        scalar_factorized=scalar_factorized,
+        rank_one_factored=rank_one_factored,
+        chunked_recipe=chunked_recipe,
     )
     candidate = select_candidate(candidates, estimates)
-    selected_plan = next(
-        item for item in mathematical_plans if item.identity == candidate.plan_identity
-    )
     values = kernel_configurations(candidate, device_profile)[0]
-    tuning_result = None
     if autotune:
         from .benchmark import invocation_factory
         from .tuning import MeasurementCache, tune_candidates
 
-        provisional_plan = TileLangPlan(
-            source_identity,
-            selected_plan,
-            candidate,
-            KernelConfig(_digest((candidate.identity, "probe")), ()),
-            "probe-binary",
-            "probe-tuning",
-            mode,
-            feature_sizes,
-            ContextContract((), (), ()),
-            WorkspacePolicy(
-                shape.state_total_elements * shape.heads * 4, target.workspace_bytes
-            ),
-            mathematical_plans,
-            candidates,
-            candidate_estimates=candidate_estimates,
-            estimation_shape=shape,
-            device_profile=device_profile,
-        )
-        provisional = TileLangExecutable(
-            provisional_plan,
-            backward_ir,
-            dense_summary,
-            scalar_factorized,
-            program=operator._program,
-            rank_one_factored=rank_one_factored,
-            symmetric_rank_one=bool(
-                rank_one_factored is not None and rank_one_factored.symmetric_rank_one
-            ),
-            chunked_recipe=chunked_recipe,
-        )
         device = torch.device(target.device_type)
         cache = None
         cache_root = os.environ.get("STATEFUL_OPERATOR_CACHE_DIR")
@@ -1430,9 +1408,7 @@ def compile_plan(
             cache = MeasurementCache(
                 str(Path(cache_root) / "tuning" / "measurements.json")
             )
-        factory = invocation_factory(
-            operator, compilation, provisional, mathematical_plans, device
-        )
+        factory = invocation_factory(operator, compilation, binding, device)
         tuning_result = tune_candidates(
             candidates,
             {item: kernel_configurations(item, device_profile) for item in candidates},
@@ -1445,145 +1421,33 @@ def compile_plan(
             static_costs={item: int(estimates[item].cost) for item in candidates},
         )
         candidate = tuning_result.winner
-        selected_plan = next(
-            item
-            for item in mathematical_plans
-            if item.identity == candidate.plan_identity
-        )
         values = tuning_result.winner_config
-    kernel_config = KernelConfig(
-        _digest((device_profile.target_identity, candidate.identity, values)), values
-    )
-    toolchain = _toolchain_fingerprint()
-    environment = _target_fingerprint(target)
-    fixed_roles = tuple((str(role), size) for role, size in compilation.role_sizes)
-    backward_binding = None
-    backward_values: tuple[tuple[str, int], ...] = ()
-    if backward_ir is not None and (
-        candidate.lowerer == "tilelang-factored-recurrence" or not reference_required
-    ):
-        from ..lowering.backward import bind_backward
-
-        family = backward_context_family(operator._program, candidate, dense_summary)
-        backward_values = _backward_configuration(values, family, device_profile)
-        backward_binding = bind_backward(backward_ir, family, backward_values)
-    context_values = (
-        tuple(ContextValue(*value) for value in backward_binding.context_values)
-        if backward_binding is not None
-        else ()
-    )
-    context_contract = ContextContract(context_values, context_values, ())
-    context_contract.validate()
-    binary_identity = _digest(
-        (
-            candidate.identity,
-            kernel_config.identity,
-            context_contract.identity,
-            mode,
-            feature_sizes,
-            fixed_roles,
-            toolchain,
-            environment,
-        )
-    )
-    tuning_identity = _digest(
-        (
-            source_identity,
-            fixed_roles,
-            device_profile.target_identity,
-            environment,
-            toolchain,
-            WORKLOAD_POLICY.version,
-            mode,
-            tuple(
-                (item.identity, kernel_configurations(item, device_profile))
-                for item in candidates
-            ),
-        )
-    )
-    workspace = WorkspacePolicy.for_candidate(
-        candidate,
-        estimates[candidate],
-        compilation=compilation,
-        algorithm=operator._program,
-        rank_one_factored=rank_one_factored,
-    )
-    backward_candidate = None
-    backward_kernel_config = None
-    if backward_ir is not None and (
-        candidate.lowerer == "tilelang-factored-recurrence" or not reference_required
-    ):
-        backward_candidate = LoweredCandidate(
-            _digest((source_identity, "tilelang-generic-backward", "backward")),
-            source_identity,
-            "tilelang-generic-backward",
-            "backward",
-        )
-        backward_kernel_config = KernelConfig(
-            _digest((backward_candidate.identity, backward_values, autotune)),
-            backward_values,
-        )
-    plan = TileLangPlan(
-        source_identity,
-        selected_plan,
-        candidate,
-        kernel_config,
-        binary_identity,
-        tuning_identity,
-        mode,
-        feature_sizes,
-        context_contract,
-        workspace,
-        mathematical_plans,
-        candidates,
-        backward_candidate,
-        backward_kernel_config,
-        candidate_estimates=candidate_estimates,
-        estimation_shape=shape,
-        device_profile=device_profile,
-    )
-    composition = Composition(candidate, backward_candidate, context_contract)
-    composition.validate()
+    executable = binding.bind(candidate, values)
+    plan = executable.plan
     if os.environ.get("STATEFUL_OPERATOR_CACHE_DIR"):
         publish_successful_artifact(
-            selected_plan.identity, asdict(selected_plan), layer="plans"
+            plan.mathematical_plan.identity,
+            asdict(plan.mathematical_plan),
+            layer="plans",
         )
         publish_successful_artifact(
-            kernel_config.identity, asdict(kernel_config), layer="configs"
+            plan.kernel_config.identity, asdict(plan.kernel_config), layer="configs"
         )
-        publish_successful_artifact(binary_identity, asdict(plan), layer="binaries")
         publish_successful_artifact(
-            context_contract.identity, asdict(context_contract), layer="contexts"
+            plan.binary_identity, asdict(plan), layer="binaries"
         )
-        if backward_candidate is not None:
+        publish_successful_artifact(
+            plan.context_contract.identity,
+            asdict(plan.context_contract),
+            layer="contexts",
+        )
+        if plan.backward_candidate is not None:
             publish_successful_artifact(
-                backward_candidate.identity,
-                asdict(backward_candidate),
+                plan.backward_candidate.identity,
+                asdict(plan.backward_candidate),
                 layer="backward",
             )
-    from ..lowering.chunked import select_chunked_schedule
-
-    chunked_recipe = select_chunked_schedule(chunked_recipe, candidate.lowerer)
-    return TileLangExecutable(
-        plan=plan,
-        backward_ir=backward_ir,
-        dense_summary=dense_summary,
-        scalar_factorized=scalar_factorized,
-        program=operator._program,
-        rank_one_factored=(
-            rank_one_factored
-            if candidate.lowerer == "tilelang-factored-recurrence"
-            else None
-        ),
-        symmetric_rank_one=bool(
-            candidate.lowerer == "tilelang-factored-recurrence"
-            and rank_one_factored is not None
-            and rank_one_factored.symmetric_rank_one
-        ),
-        composition=composition,
-        backward_binding=backward_binding,
-        chunked_recipe=chunked_recipe,
-    )
+    return executable
 
 
 def _structured_rewrites(features: Any) -> tuple[PlanRepresentation, ...]:

@@ -247,9 +247,18 @@ def test_tuning_invocation_uses_the_published_workspace_contract(
     import torch
 
     from attn_engine.stateful.compile.benchmark import invocation_factory
+    from attn_engine.stateful.compile.binding import CandidateBinding
     from attn_engine.stateful.compile.plan import WorkloadPoint
     from attn_engine.stateful_operator import CompiledStatefulOperator
 
+    bindings = []
+    bind = CandidateBinding.bind
+
+    def record_binding(self, candidate, config):
+        bindings.append(self)
+        return bind(self, candidate, config)
+
+    monkeypatch.setattr(CandidateBinding, "bind", record_binding)
     compiled = _compile(
         factory,
         seqlen=length,
@@ -261,15 +270,14 @@ def test_tuning_invocation_uses_the_published_workspace_contract(
     recorded = []
 
     def record_invocation(probe, **kwargs):
-        recorded.append(probe.operator._plans[probe.specialization].plan.workspace)
+        recorded.append(probe._executable.plan.workspace)
 
     monkeypatch.setattr(CompiledStatefulOperator, "__call__", record_invocation)
     monkeypatch.setattr(torch.cuda, "mem_get_info", lambda device: (1 << 40, 1 << 40))
     build = invocation_factory(
         compiled.operator,
         compiled.compilation,
-        executable,
-        executable.plan.mathematical_plans,
+        bindings[0],
         torch.device("cpu"),
     )
     invoke = build(
