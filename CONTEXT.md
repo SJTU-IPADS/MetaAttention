@@ -19,6 +19,9 @@ A compilable backend implementation of one Mathematical Plan. Lowered Candidates
 ## Compiled operator
 The result of compilation is a callable Forward Operator. When backward generation is requested, the operator is wrapped with compiler-generated autograd integration; users invoke the forward result and PyTorch invokes the generated backward kernel. The compiled result does not expose a separate public backward handle. The selected executable binds its execution adapter at compilation, including native/chunked dispatch and legal reference fallbacks; the public operator validates each invocation without interpreting lowering families or recipes. Replacing a candidate during tuning rebuilds this binding.
 
+## Invocation validation
+Affine scans, LogAddExp scans, and Scan Stage DAGs share a compiled invocation-validation contract for input layouts, fixed logical roles, initial State, target, aliasing, and gradients. Each State carries its own default Scan Identity (zero for affine, `-inf` for LogAddExp); dense-empty legality is explicit and a DAG requires every child to allow it. Stage declaration order determines public State order. Validation does not borrow a child operator or reinterpret dense empty inputs as packed sequences; resource gates and execution remain separate.
+
 ## Tuning workload
 A compiler-chosen representative set of sequence workloads used when the caller does not know future sequence lengths. Its measurements select performance strategy but do not change Algorithm IR semantics.
 ## Dynamic workload dimensions

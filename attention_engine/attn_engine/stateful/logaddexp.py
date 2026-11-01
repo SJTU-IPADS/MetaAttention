@@ -7,8 +7,9 @@ contract: exp(logits-z') and z-z', with a zero gate for an empty prior.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, replace
-from types import SimpleNamespace
+from dataclasses import dataclass
+import hashlib
+import json
 
 import torch
 
@@ -24,11 +25,16 @@ from ..stateful_operator import (
     StateSpec,
     StateTuple,
     StatefulCompilationError,
-    StatefulOperator,
+    SCHEMA_VERSION,
+    _Compilation,
     TensorInput,
     _canonical_identity,
 )
-from .runtime.validation import validate_input_names
+from .runtime.validation import (
+    compile_validation,
+    validate_call,
+    validate_compile_roles,
+)
 
 
 class _LogAddExp(torch.autograd.Function):
@@ -114,12 +120,6 @@ class LogAddExpScanIR:
         object.__setattr__(self, "head_mapping", HeadMapping({heads[0]: heads[0]}))
 
     @property
-    def _analysis(self):
-        return SimpleNamespace(
-            normalized=self, reference_required=True, expression_types=()
-        )
-
-    @property
     def _structural_identity(self):
         return _canonical_identity(self)
 
@@ -136,13 +136,19 @@ class LogAddExpScanIR:
         )
 
 
-class LogAddExpOperator(StatefulOperator):
+class LogAddExpOperator:
     """Metadata-only compiler sharing the public Stateful validation contract."""
 
     def __init__(self, algorithm):
         if not isinstance(algorithm, LogAddExpScanIR):
             raise StatefulCompilationError("IR_SCHEMA", "algorithm", {})
-        super().__init__(algorithm)
+        self.algorithm = algorithm
+
+    def __call__(self, **kwargs):
+        raise RuntimeError(
+            "StatefulOperator must be explicitly compiled before invocation; "
+            "call operator.compile(...) and invoke the returned handle"
+        )
 
     def compile(
         self,
@@ -156,8 +162,18 @@ class LogAddExpOperator(StatefulOperator):
     ):
         if any(not isinstance(v, bool) for v in (optimized, autotune, backward)):
             raise StatefulCompilationError("COMPILE_OPTIONS", "options", {})
-        compilation = self._validate_compilation(
-            role_sizes, target, mode, CompileOptions(optimized, autotune, backward)
+        ordered = validate_compile_roles(self.algorithm, role_sizes, target, mode)
+        compilation = _Compilation(
+            ordered,
+            target,
+            mode,
+            CompileOptions(optimized, autotune, backward),
+            compile_validation(
+                self.algorithm,
+                reference_required=True,
+                state_identity=-torch.inf,
+                allow_empty_dense=True,
+            ),
         )
         if (
             target.device_type != "cuda"
@@ -173,53 +189,16 @@ class LogAddExpOperator(StatefulOperator):
                 "target",
                 {"expected": "CUDA H20 and nonnegative workspace budget"},
             )
-        return CompiledLogAddExp(self, compilation, self._compilation_key(compilation))
-
-    def _zero_state(self, runtime, name, shape, cache_default):
-        return torch.full(shape, -torch.inf, device=runtime.device, dtype=torch.float32)
-
-    def _validate_state(self, state, runtime, role_sizes, validation, *, cache_default):
-        if isinstance(state, StateTuple) and any(
-            not isinstance(t, torch.Tensor) for t in state
-        ):
-            raise StatefulCompilationError(
-                "RUNTIME_STATE", "initial_state", {"expected": "torch.Tensor"}
-            )
-        return super()._validate_state(
-            state, runtime, role_sizes, validation, cache_default=cache_default
+        # Keep the existing specialization identity independent of validation metadata.
+        identity = hashlib.sha256(
+            json.dumps(
+                (SCHEMA_VERSION, self.algorithm._structural_identity), sort_keys=True
+            ).encode()
+        ).hexdigest()
+        specialization = _canonical_identity(
+            (identity, compilation.role_sizes, target, mode, compilation.options)
         )
-
-    def _validate_runtime(self, inputs, offsets, declared_roles, validation):
-        # Shared validation intentionally rejects empty dense affine scans. This
-        # algebra also defines that case; reuse its packed empty validation.
-        if offsets is None and len(validation.inputs) == 1:
-            spec = validation.inputs[0]
-            value = inputs.get(spec.name)
-            if (
-                isinstance(value, torch.Tensor)
-                and value.ndim == len(spec.roles)
-                and value.shape[spec.sequence_axis] == 0
-            ):
-                b = value.shape[spec.roles.index(Batch)]
-                roles = (Batch, Sequence, *spec.packed_roles)
-                packed = value.permute(*(spec.roles.index(r) for r in roles)).reshape(
-                    0, *(value.shape[spec.roles.index(r)] for r in spec.packed_roles)
-                )
-                # Preserve layout errors rather than normalizing invalid inputs.
-                if not value.is_contiguous():
-                    raise StatefulCompilationError(
-                        "RUNTIME_LAYOUT", f"inputs.{spec.name}", {}
-                    )
-                runtime, sizes = super()._validate_runtime(
-                    {spec.name: packed},
-                    torch.zeros(b + 1, dtype=torch.int32, device=value.device),
-                    declared_roles,
-                    validation,
-                )
-                return replace(
-                    runtime, packed=False, uniform_length=0, offsets=None
-                ), sizes
-        return super()._validate_runtime(inputs, offsets, declared_roles, validation)
+        return CompiledLogAddExp(self, compilation, specialization)
 
 
 def _segmented_prefix(values, ids):
@@ -294,28 +273,17 @@ class CompiledLogAddExp:
         **inputs,
     ):
         c, op = self.compilation, self.operator
-        validate_input_names(c.validation.expected_input_names, inputs)
-        runtime, sizes = op._validate_runtime(
-            inputs, sequence_offsets, c.role_sizes, c.validation
-        )
-        if runtime.packed != (c.mode == "packed"):
-            raise StatefulCompilationError(
-                "RUNTIME_MODE", "sequence_offsets", {"expected": c.mode}
-            )
-        op._validate_target(runtime.device, c.target)
-        op._validate_aliases(inputs)
-        states = op._validate_state(
-            initial_state, runtime, sizes, c.validation, cache_default=False
+        runtime, sizes, states, _ = validate_call(
+            inputs,
+            initial_state=initial_state,
+            sequence_offsets=sequence_offsets,
+            role_sizes=c.role_sizes,
+            validation=c.validation,
+            mode=c.mode,
+            target=c.target,
+            backward=c.options.backward,
         )
         state = states[op.algorithm.states[0].name]
-        if (
-            not c.options.backward
-            and torch.is_grad_enabled()
-            and any(t.requires_grad for t in (*inputs.values(), state))
-        ):
-            raise StatefulCompilationError(
-                "RUNTIME_GRAD", "inputs", {"backward": "not compiled"}
-            )
         self.workspace_bytes(
             runtime.token_count,
             sequence_count=runtime.sequence_count,

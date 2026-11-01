@@ -925,6 +925,7 @@ class _StateValidation:
     name: str
     head_role: HeadRole
     feature_roles: tuple[FeatureRole, ...]
+    identity: float = 0.0
 
 
 @dataclass(frozen=True)
@@ -939,6 +940,7 @@ class _ValidationRecipe:
     reference_required: bool
     native_diagonal: bool
     head_mapping: tuple[tuple[HeadRole, HeadRole], ...]
+    allow_empty_dense: bool = False
 
 
 @dataclass(frozen=True)
@@ -1104,43 +1106,22 @@ class StatefulOperator:
         return_final_state: bool = False,
         **inputs: torch.Tensor,
     ) -> ExecutionResult:
-        from .stateful.runtime.validation import validate_input_names
+        from .stateful.runtime.validation import validate_call
 
-        validation = compiled.compilation.validation
-        validate_input_names(validation.expected_input_names, inputs)
-        runtime, role_sizes = self._validate_runtime(
+        compilation = compiled.compilation
+        validation = compilation.validation
+        runtime, role_sizes, initial_states, requires_grad = validate_call(
             inputs,
-            sequence_offsets,
-            compiled.compilation.role_sizes,
-            validation,
+            initial_state=initial_state,
+            sequence_offsets=sequence_offsets,
+            role_sizes=compilation.role_sizes,
+            validation=validation,
+            mode=compilation.mode,
+            target=compilation.target,
+            backward=compilation.options.backward,
+            default_states=self._zero_states,
+            return_final_state=return_final_state,
         )
-        expected_packed = compiled.compilation.mode == "packed"
-        if runtime.packed != expected_packed:
-            raise StatefulCompilationError(
-                "RUNTIME_MODE",
-                "sequence_offsets",
-                {"expected": compiled.compilation.mode},
-            )
-        self._validate_target(runtime.device, compiled.compilation.target)
-        self._validate_aliases(inputs)
-        self._validate_fixed_roles(role_sizes, compiled.compilation)
-        initial_states = self._validate_state(
-            initial_state,
-            runtime,
-            role_sizes,
-            validation,
-            cache_default=not (runtime.token_count == 0 and return_final_state),
-        )
-        requires_grad_state = any(
-            tensor.requires_grad for tensor in initial_states.values()
-        )
-        requires_grad_inputs = any(tensor.requires_grad for tensor in inputs.values())
-        if not compiled.compilation.options.backward and (
-            torch.is_grad_enabled() and (requires_grad_state or requires_grad_inputs)
-        ):
-            raise StatefulCompilationError(
-                "RUNTIME_GRAD", "inputs", {"backward": "not compiled"}
-            )
         executable = self._plans[compiled.specialization]
         schedule = compiled._workspace_schedule(
             runtime.token_count,
@@ -1155,7 +1136,7 @@ class StatefulOperator:
             return_final_state=return_final_state,
             validation=validation,
             schedule=schedule,
-            requires_grad=requires_grad_state or requires_grad_inputs,
+            requires_grad=requires_grad,
         )
 
     def _validate_compilation(
@@ -1165,60 +1146,14 @@ class StatefulOperator:
         mode: str,
         options: CompileOptions,
     ) -> _Compilation:
-        if not isinstance(target, Target):
-            raise StatefulCompilationError("COMPILE_TARGET", "target", {})
-        if mode not in ("dense", "packed"):
-            raise StatefulCompilationError(
-                "COMPILE_MODE", "mode", {"expected": ["dense", "packed"]}
-            )
-        declared = {
-            role
-            for spec in self._program.inputs
-            for role in spec.roles
-            if isinstance(role, (HeadRole, FeatureRole))
-        }
-        declared.update(
-            role
-            for state in self._program.states
-            for role in state.roles
-            if isinstance(role, (HeadRole, FeatureRole))
+        from .stateful.runtime.validation import (
+            compile_validation,
+            validate_compile_roles,
         )
-        actual = set(role_sizes)
-        invalid = [
-            role for role in actual if not isinstance(role, (HeadRole, FeatureRole))
-        ]
-        if invalid:
-            raise StatefulCompilationError(
-                "COMPILE_ROLE_SIZE", "role_sizes", {"runtime_roles": invalid}
-            )
-        missing = declared - actual
-        unknown = actual - declared
-        if missing or unknown:
-            raise StatefulCompilationError(
-                "COMPILE_ROLE_SIZE",
-                "role_sizes",
-                {
-                    "missing": sorted(map(str, missing)),
-                    "unknown": sorted(map(str, unknown)),
-                },
-            )
-        for role, size in role_sizes.items():
-            if not isinstance(size, int) or isinstance(size, bool) or size <= 0:
-                raise StatefulCompilationError(
-                    "COMPILE_ROLE_SIZE", f"role_sizes.{role}", {"size": size}
-                )
-        state = self._program.states[0]
-        head_roles = {spec.head_role for spec in self._program.states}
-        if len(head_roles) != 1:
-            raise StatefulCompilationError(
-                "IR_SCHEMA",
-                "states",
-                {
-                    "expected": "States share one Head role",
-                    "actual": sorted(str(role) for role in head_roles),
-                },
-            )
-        _verify_product_roles(dict(role_sizes), "role_sizes")
+
+        program = self._program
+        ordered = validate_compile_roles(program, role_sizes, target, mode)
+        state = program.states[0]
         # The {64,128} pair is a capability of the specialized matrix kernels.
         # Native diagonal lowering has its own tiled kernels and supports
         # arbitrary feature extents, so use its structural recipe as the
@@ -1253,29 +1188,10 @@ class StatefulOperator:
                 raise StatefulCompilationError(
                     "COMPILE_ROLE_SIZE", "head_mapping", {"source": source}
                 )
-        ordered = tuple(sorted(role_sizes.items(), key=lambda item: _identity(item[0])))
-        validation = _ValidationRecipe(
-            expected_input_names=tuple(spec.name for spec in self._program.inputs),
-            state_names=tuple(spec.name for spec in self._program.states),
-            output_names=tuple(readout.name for readout in self._program.readouts),
-            inputs=tuple(
-                _InputValidation(
-                    spec.name,
-                    spec.roles,
-                    spec.dtype,
-                    spec.differentiable,
-                    spec.roles.index(Sequence) if Sequence in spec.roles else None,
-                    tuple(role for role in spec.roles if role not in (Batch, Sequence)),
-                )
-                for spec in self._program.inputs
-            ),
-            states=tuple(
-                _StateValidation(spec.name, spec.head_role, spec.feature_roles)
-                for spec in self._program.states
-            ),
-            reference_required=self._program._analysis.reference_required,
+        validation = compile_validation(
+            program,
+            reference_required=program._analysis.reference_required,
             native_diagonal=native_diagonal,
-            head_mapping=self._program.head_mapping.mappings,
         )
         return _Compilation(ordered, target, mode, options, validation)
 
@@ -1289,269 +1205,6 @@ class StatefulOperator:
                 compilation.options,
             )
         )
-
-    @staticmethod
-    def _validate_fixed_roles(
-        actual: Mapping[LogicalRole, int], compilation: _Compilation
-    ) -> None:
-        for role, expected in compilation.role_sizes:
-            if actual.get(role) != expected:
-                raise StatefulCompilationError(
-                    "RUNTIME_SHAPE",
-                    "inputs",
-                    {"role": role, "expected": expected, "actual": actual.get(role)},
-                )
-
-    def _validate_runtime(
-        self,
-        inputs: Mapping[str, torch.Tensor],
-        offsets: torch.Tensor | None,
-        declared_roles: tuple[tuple[LogicalRole, int], ...],
-        validation: _ValidationRecipe,
-    ) -> tuple[_Runtime, dict[str, int]]:
-        packed = offsets is not None
-        device: torch.device | None = None
-        # Fixed Roles are validated against the compiled contract; a Role carried
-        # only by a State (never by an Input) must still resolve.
-        # Compilation already restricts these immutable pairs to Head/Feature
-        # Roles. Make one mutable extent map; all input checks below still run.
-        role_sizes: dict[LogicalRole, int] = dict(declared_roles)
-        token_count: int | None = None
-        uniform_length: int | None = None
-        for spec in validation.inputs:
-            tensor = inputs[spec.name]
-            path = f"inputs.{spec.name}"
-            if not isinstance(tensor, torch.Tensor):
-                raise StatefulCompilationError(
-                    "RUNTIME_BINDING", path, {"expected": "torch.Tensor"}
-                )
-            if tensor.dtype != spec.dtype:
-                raise StatefulCompilationError(
-                    "RUNTIME_DTYPE",
-                    path,
-                    {"expected": str(spec.dtype), "actual": str(tensor.dtype)},
-                )
-            if not tensor.is_contiguous():
-                raise StatefulCompilationError(
-                    "RUNTIME_LAYOUT", path, {"expected": "contiguous"}
-                )
-            if not spec.differentiable and tensor.requires_grad:
-                raise StatefulCompilationError(
-                    "RUNTIME_GRAD", path, {"differentiable": False}
-                )
-            if device is None:
-                device = tensor.device
-            elif tensor.device != device:
-                raise StatefulCompilationError("RUNTIME_DEVICE", "inputs", {})
-            if packed and spec.sequence_axis is None:
-                raise StatefulCompilationError(
-                    "SPECIALIZATION",
-                    path,
-                    {"reason": "packed non-sequence inputs are not supported"},
-                )
-            if packed and spec.sequence_axis is not None:
-                physical_roles = spec.packed_roles
-                if tensor.ndim != len(physical_roles) + 1:
-                    raise StatefulCompilationError(
-                        "RUNTIME_SHAPE", path, {"mode": "packed"}
-                    )
-                token_count = tensor.shape[0] if token_count is None else token_count
-                if tensor.shape[0] != token_count:
-                    raise StatefulCompilationError(
-                        "RUNTIME_SHAPE", path, {"role": "sequence"}
-                    )
-                dimensions = zip(physical_roles, tensor.shape[1:])
-            else:
-                if tensor.ndim != len(spec.roles):
-                    raise StatefulCompilationError(
-                        "RUNTIME_SHAPE", path, {"expected_ndim": len(spec.roles)}
-                    )
-                dimensions = zip(spec.roles, tensor.shape)
-                if spec.sequence_axis is not None:
-                    length = tensor.shape[spec.sequence_axis]
-                    uniform_length = (
-                        length if uniform_length is None else uniform_length
-                    )
-                    if length != uniform_length or length <= 0:
-                        raise StatefulCompilationError(
-                            "RUNTIME_SHAPE", path, {"role": "sequence"}
-                        )
-            for role, size in dimensions:
-                if isinstance(role, _SingletonRole):
-                    if role not in (Batch, Sequence) and size != 1:
-                        raise StatefulCompilationError(
-                            "RUNTIME_SHAPE", path, {"role": str(role), "expected": 1}
-                        )
-                    if role not in (Batch, Sequence):
-                        continue
-                previous = role_sizes.setdefault(role, size)
-                if previous != size:
-                    raise StatefulCompilationError(
-                        "RUNTIME_SHAPE",
-                        path,
-                        {"role": role, "sizes": [previous, size]},
-                    )
-        assert device is not None
-        if packed:
-            assert offsets is not None
-            token_count = token_count or 0
-            if (
-                offsets.dtype != torch.int32
-                or offsets.ndim != 1
-                or not offsets.is_contiguous()
-                or offsets.device != device
-                or offsets.numel() < 1
-            ):
-                raise StatefulCompilationError(
-                    "RUNTIME_OFFSETS",
-                    "sequence_offsets",
-                    {"expected": "device-local contiguous int32 vector"},
-                )
-            torch._assert_async(offsets[0] == 0, "sequence_offsets must start at zero")
-            torch._assert_async(
-                offsets[-1] == token_count,
-                "sequence_offsets must end at total token count",
-            )
-            torch._assert_async(
-                torch.all(offsets[1:] >= offsets[:-1]),
-                "sequence_offsets must be nondecreasing",
-            )
-            sequence_count = offsets.shape[0] - 1
-            role_sizes[Batch] = sequence_count
-        else:
-            if uniform_length is None:
-                raise StatefulCompilationError(
-                    "RUNTIME_SHAPE", "inputs", {"sequence": "required"}
-                )
-            sequence_count = role_sizes[Batch]
-            token_count = sequence_count * uniform_length
-        state_spec = validation.states[0]
-        try:
-            state_heads = role_sizes[state_spec.head_role]
-            feature_sizes = tuple(role_sizes[role] for role in state_spec.feature_roles)
-        except KeyError as error:
-            raise StatefulCompilationError(
-                "RUNTIME_SHAPE", "states[0].roles", {"missing_role": error.args[0]}
-            ) from error
-        for spec in validation.states:
-            try:
-                sizes = tuple(role_sizes[role] for role in spec.feature_roles)
-            except KeyError as error:
-                raise StatefulCompilationError(
-                    "RUNTIME_SHAPE",
-                    f"states.{spec.name}",
-                    {"missing_role": error.args[0]},
-                ) from error
-            if (
-                device.type == "cuda"
-                and not validation.reference_required
-                and not validation.native_diagonal
-                and any(size not in (64, 128) for size in sizes)
-            ):
-                raise StatefulCompilationError(
-                    "SPECIALIZATION",
-                    "states[0].roles",
-                    {
-                        "state": spec.name,
-                        "feature_sizes": sizes,
-                        "supported": [64, 128],
-                    },
-                )
-        _verify_product_roles(role_sizes, "inputs")
-        for source, target in validation.head_mapping:
-            if target != state_spec.head_role or source not in role_sizes:
-                raise StatefulCompilationError(
-                    "IR_TYPE", "head_mapping", {"source": source, "target": target}
-                )
-            if state_heads % role_sizes[source]:
-                raise StatefulCompilationError(
-                    "RUNTIME_SHAPE", "head_mapping", {"source": source}
-                )
-        return (
-            _Runtime(
-                packed,
-                device,
-                sequence_count,
-                token_count,
-                uniform_length,
-                state_heads,
-                tuple(feature_sizes),
-                offsets,
-            ),
-            role_sizes,
-        )
-
-    @staticmethod
-    def _validate_target(device: torch.device, target: Target) -> None:
-        from .stateful.runtime.validation import validate_target
-
-        validate_target(device, target)
-
-    @staticmethod
-    def _validate_aliases(inputs: Mapping[str, torch.Tensor]) -> None:
-        from .stateful.runtime.validation import validate_aliases
-
-        validate_aliases(inputs)
-
-    def _validate_state(
-        self,
-        state: StateTuple | None,
-        runtime: _Runtime,
-        role_sizes: Mapping[LogicalRole, int],
-        validation: _ValidationRecipe,
-        *,
-        cache_default: bool,
-    ) -> dict[str, torch.Tensor]:
-        """Validate initial State for every declared State and return them by name."""
-        expected = validation.state_names
-        if state is not None and (
-            not isinstance(state, StateTuple) or state.names != expected
-        ):
-            raise StatefulCompilationError(
-                "RUNTIME_STATE", "initial_state", {"expected": list(expected)}
-            )
-        states: dict[str, torch.Tensor] = {}
-        for index, spec in enumerate(validation.states):
-            shape = (
-                runtime.sequence_count,
-                role_sizes[spec.head_role],
-                *(role_sizes[role] for role in spec.feature_roles),
-            )
-            if state is None:
-                states[spec.name] = self._zero_state(
-                    runtime, spec.name, shape, cache_default
-                )
-                continue
-            tensor = state[index]
-            if (
-                tuple(tensor.shape) != shape
-                or tensor.dtype != torch.float32
-                or tensor.device != runtime.device
-                or not tensor.is_contiguous()
-            ):
-                raise StatefulCompilationError(
-                    "RUNTIME_STATE",
-                    f"initial_state.{spec.name}",
-                    {
-                        "shape": shape,
-                        "dtype": "torch.float32",
-                        "device": str(runtime.device),
-                    },
-                )
-            states[spec.name] = tensor
-        return states
-
-    def _zero_state(
-        self, runtime: _Runtime, name: str, shape: tuple[int, ...], cache_default: bool
-    ) -> torch.Tensor:
-        if not cache_default:
-            return torch.zeros(shape, device=runtime.device, dtype=torch.float32)
-        key = (runtime.device, name, shape)
-        cached = self._zero_states.get(key)
-        if cached is None:
-            cached = torch.zeros(shape, device=runtime.device, dtype=torch.float32)
-            self._zero_states[key] = cached
-        return cached
 
     def _specialization_key(
         self,

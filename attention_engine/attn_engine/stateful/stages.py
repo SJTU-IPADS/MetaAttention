@@ -29,6 +29,7 @@ from ..stateful_operator import (
     _expressions,
 )
 
+from .runtime.validation import validate_call
 from .runtime.workspace import StageWorkspace
 
 
@@ -67,11 +68,11 @@ class StageOutput:
 
 
 def _output_spec(stage, name):
-    algorithm = stage.algorithm._analysis.normalized
     from .logaddexp import LogAddExpScanIR
 
-    if isinstance(algorithm, LogAddExpScanIR):
-        return algorithm.output_spec(name)
+    if isinstance(stage.algorithm, LogAddExpScanIR):
+        return stage.algorithm.output_spec(name)
+    algorithm = stage.algorithm._analysis.normalized
     for index, readout in enumerate(algorithm.readouts):
         if readout.name != name:
             continue
@@ -327,13 +328,19 @@ class CompiledScanStages:
             True,
             False,
             (),
+            allow_empty_dense=all(recipe.allow_empty_dense for recipe in recipes),
         )
         # Count expression tensors as well as trajectory copies. Each typed DAG
         # node is charged even if execution can reuse it: a conservative baseline.
         materialized_bytes_per_token = 0
         for stage in operator.algorithm.stages:
             head = role_sizes[stage.algorithm.states[0].head_role]
-            for _, typed in stage.algorithm._analysis.expression_types:
+            expression_types = (
+                stage.algorithm._analysis.expression_types
+                if isinstance(stage.algorithm, AlgorithmIR)
+                else ()
+            )
+            for _, typed in expression_types:
                 elements = head * math.prod(
                     role_sizes[r] for r in typed.roles if isinstance(r, FeatureRole)
                 )
@@ -392,43 +399,16 @@ class CompiledScanStages:
         return_final_state=False,
         **inputs,
     ):
-        from .runtime.validation import validate_input_names
-
-        validate_input_names(self.validation.expected_input_names, inputs)
-        validator = next(iter(self.children.values())).operator
-        runtime, sizes = validator._validate_runtime(
-            inputs, sequence_offsets, tuple(self.role_sizes.items()), self.validation
+        runtime, sizes, states, _ = validate_call(
+            inputs,
+            initial_state=initial_state,
+            sequence_offsets=sequence_offsets,
+            role_sizes=tuple(self.role_sizes.items()),
+            validation=self.validation,
+            mode=self.mode,
+            target=self.target,
+            backward=self.backward,
         )
-        if runtime.packed != (self.mode == "packed"):
-            raise StatefulCompilationError(
-                "RUNTIME_MODE", "sequence_offsets", {"expected": self.mode}
-            )
-        validator._validate_target(runtime.device, self.target)
-        validator._validate_aliases(inputs)
-        if initial_state is None:
-            states = {}
-            for child in self.children.values():
-                states.update(
-                    child.operator._validate_state(
-                        None,
-                        runtime,
-                        sizes,
-                        child.compilation.validation,
-                        cache_default=False,
-                    )
-                )
-        else:
-            states = validator._validate_state(
-                initial_state, runtime, sizes, self.validation, cache_default=False
-            )
-        if (
-            not self.backward
-            and torch.is_grad_enabled()
-            and any(t.requires_grad for t in (*inputs.values(), *states.values()))
-        ):
-            raise StatefulCompilationError(
-                "RUNTIME_GRAD", "inputs", {"backward": "not compiled"}
-            )
         schedule = self._workspace.schedule(
             runtime.token_count,
             sequence_count=runtime.sequence_count,
